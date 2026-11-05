@@ -97,6 +97,11 @@ const report = baseline
     }
   })
 
+const matchedScores = report
+  .map((row) => ('score_diff' in row ? row.score_diff : null))
+  .filter((value): value is number => value !== null)
+const absDiffs = matchedScores.map((value) => Math.abs(value))
+
 const summary = {
   baselineRows: baseline.length,
   localMatched: report.filter((row) => !('missing' in row)).length,
@@ -115,6 +120,35 @@ const summary = {
       row.industry_local &&
       row.industry_export !== row.industry_local,
   ).length,
+  score: {
+    compared: matchedScores.length,
+    avgAbsDiff:
+      absDiffs.length === 0
+        ? null
+        : Number(
+            (
+              absDiffs.reduce((sum, value) => sum + value, 0) / absDiffs.length
+            ).toFixed(2),
+          ),
+    maxAbsDiff: absDiffs.length === 0 ? null : Math.max(...absDiffs),
+  },
 }
 
-console.log(JSON.stringify({ summary, sample: report.slice(0, 20) }, null, 2))
+const topScoreGaps = report
+  .filter((row) => 'score_diff' in row && row.score_diff !== null)
+  .sort((a, b) => {
+    const left = 'score_diff' in a ? Math.abs(a.score_diff ?? 0) : 0
+    const right = 'score_diff' in b ? Math.abs(b.score_diff ?? 0) : 0
+    return right - left
+  })
+  .slice(0, 10)
+
+const notes = [
+  '本脚本仅作对比校验，不参与任何运行时逻辑。',
+  'debt_median_export 与 debt_median_local 不一致属预期：模拟器该值来自其私有后端常量，本地为公开口径现算结果。',
+  '评分差异主要来自缺失字段（股息率/商誉/质押率等）与行业口径差异。',
+]
+
+console.log(
+  JSON.stringify({ summary, notes, topScoreGaps, sample: report.slice(0, 20) }, null, 2),
+)

@@ -22,6 +22,21 @@ PE 得分  = bta(10q, 20q, PE) × 100      取值范围 [10q, 20q]
 
 筛选口径：`>200 分`、`股息率 > 1%`、`资产负债率 < 行业资产负债率中位数`、满配过滤单行业 `> 3%`。
 
+## 行业口径（公开、可复现）
+
+「资产负债率 < 行业资产负债率中位数」中的**中位数**，本项目采用**完全可复现的公开口径**：
+
+1. 行业原始字段取自东方财富公开接口的 `BOARD_NAME`；
+2. 经 [industry.ts](file:///Users/yisui/Documents/Trae/temp_20261105_01/src/lib/industry.ts) 归一化为「一级行业 + 细分行业」两层（别名表未覆盖时保守回退为「去层级值作一级、原值作细分」）；
+3. **以本次拉取到的全市场样本**按细分行业分组，取资产负债率中位数（偶数个取中间两数均值），见 [strategy.ts](file:///Users/yisui/Documents/Trae/temp_20261105_01/src/lib/strategy.ts#L73-L89)。
+
+### 与「大数模拟器」的差异说明
+
+「大数模拟器」页面上的细分行业资产负债率中位数是其**后端私有快照下发的一个行业级常量**，并非按导出列表现算，公开数据无法复现该值。因此：
+
+- 本项目**不追求与模拟器数值完全一致**，只保证口径公开、可复现、可解释；
+- 模拟器导出文件**仅用于对比校验**，由 [compare_simulator_export.mts](file:///Users/yisui/Documents/Trae/temp_20261105_01/scripts/compare_simulator_export.mts) 承载，**不进入任何运行时逻辑**，也未被产品代码引用。
+
 ## 数据源
 
 | 用途 | 数据源 | 说明 |
@@ -96,11 +111,15 @@ code,name,industry,price,pb,pe,ps,roe,debtRatio,dividendYield,marketCap,lowPrice
 src/
   data/stocks.ts        默认演示数据与默认配置
   lib/eastmoney.ts      东方财富公开接口接入与字段映射
+  lib/industry.ts       东财 BOARD_NAME → 一级/细分行业归一化映射
   lib/kline.ts          前端 K 线客户端（分批请求 / 回填一年内最低价）
   lib/csv.ts            CSV 生成与下载
   lib/strategy.ts       三好学生评分、两阶段剪枝、组合推荐、市场状态摘要
   types.ts              核心类型定义
   App.tsx               单页工作台 UI
+scripts/
+  compare_simulator_export.mts  模拟器导出 vs 本地实算的差异报告（仅校验，不进运行时）
+  export_simulator_baseline.py  Excel 导出 → 对比脚本所需 JSON
 server/
   kline.mjs             K 线代理核心逻辑（腾讯前复权日线）
   index.mjs             生产服务（/api/kline + 静态托管）
@@ -112,6 +131,7 @@ vite.config.ts          开发环境挂载同一份 K 线逻辑
 - 数据来自公开网页接口而非官方 API，字段与参数可能随时调整；已做空值兜底与错误提示。
 - 退市整理期股票（名称含「退」）已剔除，避免极低 PB 污染低估值选股。
 - 股息率与商誉占净资产当前数据源未提供，显示 `—` 且不参与淘汰判定。
+- 行业资产负债率中位数与「大数模拟器」数值不一致属预期（口径来源不同，详见上文「行业口径」）。
 - 腾讯 K 线接口不支持批量，采用单只并发（默认并发 24）；全量 5000 只约 4 分钟，剪枝后大幅缩短。
 - 无持久化：刷新页面后需重新拉取。
 
