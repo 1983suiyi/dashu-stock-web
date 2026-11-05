@@ -16,7 +16,7 @@ export const defaultConfig: StrategyConfig = {
   minDividendYield: 1,
   maxIndustryWeight: 0.03,
   maxEquityExposure: 0.6667,
-  klineDays: 300,
+  klineDays: 1100,
   maxKlineCandidates: 600,
 }
 
@@ -92,6 +92,7 @@ export const demoStocks: StockRecord[] = demoRows.map(
     goodwillRatio: null,
     pledgeRatio: null,
     lowPrice1y: Number((price / (1 + gain1y)).toFixed(2)),
+    lowPrice3y: null,
     isST: false,
   }),
 )

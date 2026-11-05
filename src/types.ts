@@ -22,6 +22,8 @@ export type StockRecord = {
   pledgeRatio: number | null
   /** 前复权一年内最低价，由后端 K 线代理补齐 */
   lowPrice1y: number | null
+  /** 前复权三年内最低价，由后端 K 线代理补齐 */
+  lowPrice3y: number | null
   isST: boolean
 }
 
@@ -52,6 +54,9 @@ export type ScoredStock = StockRecord & {
   peScore: number | null
   priceScore: number | null
   gain1y: number | null
+  gain3y: number | null
+  /** 当前公开口径的扫雷结果：100=未触发高风险硬过滤，越低风险越高 */
+  mineScore: number
   /** 三项之和，满分 300；K 线缺失时为 PB+PE 两项之和 */
   totalScore: number
   /** 绝对胜算概率(%) = 总分 / 3 */
@@ -101,6 +106,7 @@ export type PortfolioIndustrySummary = {
 
 export type KlineResult = {
   low1y: number | null
+  low3y: number | null
   high1y: number | null
   lastClose: number | null
   from: string | null

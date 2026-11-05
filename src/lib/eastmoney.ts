@@ -356,6 +356,7 @@ export const fetchRealMarketData = async (
       pledgeRatio: pledgeRatios.get(code) ?? 0,
       // 由后端 K 线代理补齐
       lowPrice1y: null,
+        lowPrice3y: null,
       isST: /ST/i.test(name),
     })
   }

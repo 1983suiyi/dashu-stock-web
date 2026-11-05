@@ -64,6 +64,32 @@ export const priceScoreOf = (price: number | null, low1y: number | null) => {
   }
 }
 
+export const gainOf = (price: number | null, low: number | null) => {
+  if (price === null || low === null || low <= 0) return null
+  return (price - low) / low
+}
+
+const mineScoreOf = (
+  goodwillRatio: number | null,
+  pledgeRatio: number | null,
+) => {
+  const goodwill = goodwillRatio ?? 0
+  const pledge = pledgeRatio ?? 0
+
+  // 当前公开口径只对“超过硬过滤线”的风险做降分；
+  // 未触发高风险拦截时记 100，后续再继续补全更细的扫雷因子。
+  const goodwillPenalty =
+    goodwill <= MAX_GOODWILL_RATIO
+      ? 0
+      : Math.min(70, ((goodwill - MAX_GOODWILL_RATIO) / 30) * 70)
+  const pledgePenalty =
+    pledge <= MAX_PLEDGE_RATIO
+      ? 0
+      : Math.min(30, ((pledge - MAX_PLEDGE_RATIO) / 20) * 30)
+
+  return Math.max(0, Math.round(100 - goodwillPenalty - pledgePenalty))
+}
+
 const median = (values: number[]) => {
   if (values.length === 0) return null
   const sorted = [...values].sort((a, b) => a - b)
@@ -104,6 +130,8 @@ export const scoreStocks = (
       const pbScore = toValuationScore(stock.pb, pbLo, pbHi)
       const peScore = toValuationScore(stock.pe, peLo, peHi)
       const { gain1y, priceScore } = priceScoreOf(stock.price, stock.lowPrice1y)
+      const gain3y = gainOf(stock.price, stock.lowPrice3y)
+      const mineScore = mineScoreOf(stock.goodwillRatio, stock.pledgeRatio)
 
       const notes: string[] = []
       const missingFields: string[] = []
@@ -111,6 +139,7 @@ export const scoreStocks = (
       if (pbScore === null) missingFields.push('PB')
       if (peScore === null) missingFields.push('PE')
       if (priceScore === null) missingFields.push('一年内最低价')
+      if (stock.lowPrice3y === null) missingFields.push('三年内最低价')
       if (stock.dividendYield === null) missingFields.push('股息率')
       if (stock.goodwillRatio === null) missingFields.push('商誉占比')
       if (stock.pledgeRatio === null) missingFields.push('股权质押比例')
@@ -161,6 +190,8 @@ export const scoreStocks = (
         peScore,
         priceScore,
         gain1y,
+        gain3y,
+        mineScore,
         totalScore,
         winProbability,
         pbBand: [pbLo, pbHi],
@@ -187,7 +218,7 @@ export const pickKlineCandidates = (
   const cutoff = config.scoreThreshold - 100
   return scored
     .filter((stock) => {
-      if (stock.lowPrice1y !== null) return false
+      if (stock.lowPrice1y !== null && stock.lowPrice3y !== null) return false
       if (stock.isST) return false
       if (stock.debtAboveIndustryMedian === true) return false
       if (stock.goodwillRatio !== null && stock.goodwillRatio >= MAX_GOODWILL_RATIO) {

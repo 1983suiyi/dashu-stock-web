@@ -66,6 +66,7 @@ const csvHeaders = [
   'dividendYield',
   'marketCap',
   'lowPrice1y',
+  'lowPrice3y',
   'goodwillRatio',
   'pledgeRatio',
   'isST',
@@ -146,6 +147,7 @@ const parseCsv = (text: string): StockRecord[] => {
       goodwillRatio: parseNumberCell(get('goodwillRatio')),
       pledgeRatio: parseNumberCell(get('pledgeRatio')),
       lowPrice1y: parseNumberCell(get('lowPrice1y')),
+      lowPrice3y: parseNumberCell(get('lowPrice3y')),
       isST: parseBoolean(get('isST')),
     }
   })
@@ -162,6 +164,9 @@ const percent = (value: number | null, digits = 2) =>
 
 const percentView = (value: number | null, digits = 1) =>
   value === null ? '—' : `${value.toFixed(digits)}%`
+
+const gainView = (value: number | null, digits = 0) =>
+  value === null ? '—' : `${(value * 100).toFixed(digits)}%`
 
 const yi = (value: number | null, digits = 0) =>
   value === null ? '—' : (value / 1e8).toFixed(digits)
@@ -206,6 +211,10 @@ function App() {
     () => recommendPortfolio(scoredStocks, config, market),
     [scoredStocks, config, market],
   )
+  const portfolioWeightByCode = useMemo(
+    () => new Map(portfolio.map((item) => [item.code, item.targetWeight])),
+    [portfolio],
+  )
   const marketSummary = useMemo(() => summarizeMarket(market), [market])
   const exposure = useMemo(() => portfolioExposure(portfolio), [portfolio])
   const industrySummaries = useMemo(
@@ -224,7 +233,10 @@ function App() {
   const [peLo, peHi] = peBand(config.discount)
 
   const pendingKline = useMemo(
-    () => scoredStocks.filter((stock) => stock.lowPrice1y === null).length,
+    () =>
+      scoredStocks.filter(
+        (stock) => stock.lowPrice1y === null || stock.lowPrice3y === null,
+      ).length,
     [scoredStocks],
   )
   const visibleStocks = onlyEligible ? eligibleStocks : scoredStocks
@@ -273,7 +285,7 @@ function App() {
     const { data, failed } = await fetchKlines(
       candidates,
       config.klineDays,
-      (done, total) => setProgress(`正在补齐一年内最低价：${done}/${total}`),
+      (done, total) => setProgress(`正在补齐一年/三年低价：${done}/${total}`),
     )
 
     return {
@@ -295,7 +307,7 @@ function App() {
       setDataMeta({ ...meta, klineCount: count })
       setMessage(
         `已接入真实数据：${meta.total} 只 A 股，交易日 ${meta.tradeDate}，` +
-          `其中 ${count} 只补齐了一年内最低价。`,
+          `其中 ${count} 只补齐了一年/三年低价。`,
       )
       if (failed.length > 0) {
         setWarning(`有 ${failed.length} 只候选未能取到 K 线，其涨幅得分暂缺。`)
@@ -322,7 +334,7 @@ function App() {
       setDataMeta((current) =>
         current ? { ...current, klineCount: count } : current,
       )
-      setMessage(`已为 ${count} 只候选补齐一年内最低价。`)
+      setMessage(`已为 ${count} 只候选补齐一年/三年低价。`)
       if (failed.length > 0) {
         setWarning(`有 ${failed.length} 只候选未能取到 K 线。`)
       }
@@ -410,15 +422,21 @@ function App() {
       stock.sector,
       stock.industry,
       stock.sourceIndustry ?? '',
+      ((portfolioWeightByCode.get(stock.code) ?? 0) * 100).toFixed(2),
+      fixed(stock.mineScore, 0),
       fixed(stock.pb),
       fixed(stock.pe),
+      fixed(stock.price),
+      percent(stock.gain1y),
+      percent(stock.gain3y),
       fixed(stock.pbScore, 1),
       fixed(stock.peScore, 1),
       fixed(stock.priceScore, 1),
       fixed(stock.totalScore, 1),
       fixed(stock.winProbability, 1),
       fixed(stock.lowPrice1y),
-      percent(stock.gain1y),
+      fixed(stock.lowPrice3y),
+      yi(stock.marketCap),
       fixed(stock.debtRatio),
       fixed(stock.industryDebtMedian),
       fixed(stock.dividendYield),
@@ -433,18 +451,24 @@ function App() {
         [
           '代码',
           '名称',
-            '行业',
-            '细分',
-            '原始行业',
+          '行业',
+          '细分',
+          '原始行业',
+          '持仓(%)',
+          '扫雷宝',
           '当前市净率',
           'PE',
+          '现价',
+          '一年涨幅(%)',
+          '三年涨幅(%)',
           'PB得分',
           'PE得分',
           '涨幅得分',
           '三好学生评分',
           '绝对胜算概率(%)',
           '一年内最低价',
-          '一年内涨幅(%)',
+          '三年内最低价',
+          '总市值(亿)',
           '资产负债率(%)',
           '行业资产负债率中位数(%)',
           '股息率(%)',
@@ -606,8 +630,8 @@ function App() {
         <div className="section-title">
           <h2>数据与导出</h2>
           <p>
-            行情与财务来自东方财富公开接口（浏览器直连）；一年内最低价由本地
-            <code> /api/kline </code>代理补齐，用于计算涨幅得分。
+            行情与财务来自东方财富公开接口（浏览器直连）；一年/三年低价由本地
+            <code> /api/kline </code>代理补齐，用于计算涨1、涨3与涨幅得分。
           </p>
         </div>
 
@@ -677,13 +701,13 @@ function App() {
         )}
 
         <p className="helper-text">
-          说明：涨幅得分依赖「一年内最低价」。为控制请求量，只对
+          说明：涨幅得分依赖「一年内最低价」，截图中的涨3依赖「三年内最低价」。为控制请求量，只对
           <strong>可能达到门槛</strong>的候选（PB+PE 得分 &gt; 门槛 − 100）补 K
           线，该剪枝不丢结果。当前仍有 {pendingKline} 只未补齐。
         </p>
         <p className="helper-text">
-          当前接口未提供<strong>股息率</strong>与<strong>商誉占净资产</strong>，
-          相关列显示为 <code>—</code> 且不参与淘汰判定。导入字段：
+          当前已接入<strong>股息率</strong>、<strong>商誉占净资产</strong>与
+          <strong>股权质押比例</strong>；扫雷宝展示的是当前公开口径结果。导入字段：
           <code>{csvHeaders.join(', ')}</code>
         </p>
       </section>
@@ -765,7 +789,7 @@ function App() {
                 type="number"
                 value={config.klineDays}
                 min={20}
-                max={400}
+                max={1400}
                 onChange={(event) =>
                   handleConfigChange('klineDays', Number(event.target.value))
                 }
@@ -837,11 +861,16 @@ function App() {
               <div className="mini-metrics">
                 <span>PB {show(selectedStock.pb)}</span>
                 <span>PE {show(selectedStock.pe)}</span>
+                <span>现价 {show(selectedStock.price)}</span>
+                <span>扫雷宝 {selectedStock.mineScore}</span>
                 <span>
                   资产负债率 {show(selectedStock.debtRatio, 1)} /{' '}
                   {show(selectedStock.industryDebtMedian, 1)}
                 </span>
+                <span>涨1 {gainView(selectedStock.gain1y, 0)}</span>
+                <span>涨3 {gainView(selectedStock.gain3y, 0)}</span>
                 <span>一年内低点 {show(selectedStock.lowPrice1y)}</span>
+                <span>三年内低点 {show(selectedStock.lowPrice3y)}</span>
               </div>
               <ul className="explain-list">
                 {stockDiagnosis.map((reason) => (
@@ -871,7 +900,7 @@ function App() {
       <div className="section-title">
         <h2>大数评分</h2>
         <p>
-          PB、PE、涨幅得分各 100 分；绝对胜算概率 = 总分 / 3。这里能直接看到未入池原因。
+          按截图补齐名称/代码、行业/细分、持仓、大数分、现价、涨1、涨3、扫雷宝与风险字段。
         </p>
       </div>
 
@@ -894,18 +923,21 @@ function App() {
         <table>
           <thead>
             <tr>
-              <th>代码</th>
-              <th>名称</th>
-              <th>行业</th>
-              <th>细分</th>
+              <th>名称/代码</th>
+              <th>行业/细分</th>
+              <th>持仓</th>
+              <th>大数分</th>
               <th>PB</th>
               <th>PE</th>
-              <th>PB得分</th>
-              <th>PE得分</th>
-              <th>涨幅得分</th>
-              <th>三好学生评分</th>
-              <th>胜算概率</th>
-              <th>资产负债率 / 行业中位数</th>
+              <th>现价</th>
+              <th>涨1</th>
+              <th>涨3</th>
+              <th>扫雷宝</th>
+              <th>总市值</th>
+              <th>股息率</th>
+              <th>质押率</th>
+              <th>商誉</th>
+              <th>资产负债</th>
               <th>状态</th>
               <th>风险提示</th>
             </tr>
@@ -913,17 +945,29 @@ function App() {
           <tbody>
             {visibleStocks.slice(0, 300).map((stock) => (
               <tr key={stock.code}>
-                <td>{stock.code}</td>
-                <td>{stock.name}</td>
-                <td>{stock.sector}</td>
-                <td>{stock.industry}</td>
+                <td>
+                  <div>{stock.name}</div>
+                  <div className="helper-text">{stock.code}</div>
+                </td>
+                <td>
+                  <div>{stock.sector}</div>
+                  <div className="helper-text">{stock.industry}</div>
+                </td>
+                <td>{((portfolioWeightByCode.get(stock.code) ?? 0) * 100).toFixed(0)}%</td>
+                <td>
+                  <div>{show(stock.winProbability, 1)}</div>
+                  <div className="helper-text">{stock.totalScore.toFixed(0)}</div>
+                </td>
                 <td>{show(stock.pb)}</td>
                 <td>{show(stock.pe)}</td>
-                <td>{show(stock.pbScore, 1)}</td>
-                <td>{show(stock.peScore, 1)}</td>
-                <td>{show(stock.priceScore, 1)}</td>
-                <td>{stock.totalScore.toFixed(1)}</td>
-                <td>{show(stock.winProbability, 1)}%</td>
+                <td>{show(stock.price)}</td>
+                <td>{gainView(stock.gain1y, 0)}</td>
+                <td>{gainView(stock.gain3y, 0)}</td>
+                <td>{stock.mineScore}</td>
+                <td>{yi(stock.marketCap)}</td>
+                <td>{percentView(stock.dividendYield, 1)}</td>
+                <td>{percentView(stock.pledgeRatio, 1)}</td>
+                <td>{percentView(stock.goodwillRatio, 1)}</td>
                 <td>
                   {show(stock.debtRatio, 1)} / {show(stock.industryDebtMedian, 1)}
                 </td>

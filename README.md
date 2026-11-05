@@ -45,7 +45,7 @@ PE 得分  = bta(10q, 20q, PE) × 100      取值范围 [10q, 20q]
 | 近 12 个月分红明细 | **东方财富数据中心公开接口** | 报表 `RPT_SHAREBONUS_DET`，用于换算股息率 |
 | 商誉风险 | **东方财富数据中心公开接口** | 报表 `RPT_GOODWILL_STOCKDETAILS`，用于读取商誉占净资产比例 |
 | 股权质押风险 | **东方财富数据中心公开接口** | 报表 `RPT_CSDC_LIST_NEWEST`，用于读取最新质押比例 |
-| 一年内最低价（前复权） | **腾讯行情 K 线** | 经本地 `/api/kline` 代理（东财 K 线接口实测不可用） |
+| 一年/三年低价（前复权） | **腾讯行情快照 + 东方财富历史 K 线** | 经本地 `/api/kline` 代理补齐，用于计算涨1、涨3与涨幅得分 |
 
 东方财富实测结论（均为真实结果，非推测）：
 
@@ -86,8 +86,8 @@ PE 得分  = bta(10q, 20q, PE) × 100      取值范围 [10q, 20q]
 
 ## 当前能力
 
-- 一键拉取全市场真实数据（估值 + 财务 + 行业 + 分红 + 商誉 + 质押），再自动补齐 K 线
-- **Web 端直接展示选股列表**（大数评分表：PB/PE/涨幅分项得分、三好学生评分、胜算概率、资产负债率对比、状态、风险提示）
+- 一键拉取全市场真实数据（估值 + 财务 + 行业 + 分红 + 商誉 + 质押），再自动补齐一年/三年低价
+- **Web 端直接展示选股列表**（名称/代码、行业/细分、持仓、大数分、PB、PE、现价、涨1、涨3、扫雷宝、总市值、股息率、质押率、商誉、资产负债、状态、风险提示）
 - **导出 CSV**：「大数评分表」「大数持仓」两张表（UTF-8 BOM，Excel 打开不乱码）
 - 市场估值快照与仓位建议联动（全市场 PB/PE 中位数自动计算）
 - 两阶段剪枝补齐 K 线：只为可能及格的候选请求，结果精确不丢候选
@@ -115,7 +115,7 @@ npm start          # 生产：node server/index.mjs，同时提供 /api/kline �
 ## CSV 导入字段
 
 ```text
-code,name,industry,price,pb,pe,ps,roe,debtRatio,dividendYield,marketCap,lowPrice1y,goodwillRatio,pledgeRatio,isST
+code,name,industry,price,pb,pe,ps,roe,debtRatio,dividendYield,marketCap,lowPrice1y,lowPrice3y,goodwillRatio,pledgeRatio,isST
 ```
 
 空单元格会被解析为空值（而非 0），示例模板见 `docs/example-stocks-template.csv`。
@@ -127,7 +127,7 @@ src/
   data/stocks.ts        默认演示数据与默认配置
   lib/eastmoney.ts      东方财富公开接口接入与字段映射
   lib/industry.ts       东财 BOARD_NAME → 一级/细分行业归一化映射
-  lib/kline.ts          前端 K 线客户端（分批请求 / 回填一年内最低价）
+  lib/kline.ts          前端 K 线客户端（分批请求 / 回填一年/三年低价）
   lib/csv.ts            CSV 生成与下载
   lib/strategy.ts       三好学生评分、两阶段剪枝、组合推荐、市场状态摘要
   types.ts              核心类型定义
@@ -147,7 +147,7 @@ vite.config.ts          开发环境挂载同一份 K 线逻辑
 - 退市整理期股票（名称含「退」）已剔除，避免极低 PB 污染低估值选股。
 - 股息率、商誉占净资产、股权质押比例均已接入公开数据口径；当前仅先实现 `20%` 的高风险硬过滤，完整扫雷分数仍待补齐。
 - 行业资产负债率中位数与「大数模拟器」数值不一致属预期（口径来源不同，详见上文「行业口径」）。
-- 腾讯 K 线接口不支持批量，采用单只并发（默认并发 24）；全量 5000 只约 4 分钟，剪枝后大幅缩短。
+- 三年低价依赖东方财富历史 K 线逐只补齐，速度慢于一年低价快照；当前仍依赖候选剪枝控制耗时。
 - 无持久化：刷新页面后需重新拉取。
 
 ## 说明

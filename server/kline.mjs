@@ -1,22 +1,27 @@
 /**
  * K 线代理（服务端）
  *
- * 为什么需要它：一年内最低价是「三好学生评分」涨幅分项的输入，
- * 但腾讯前复权 K 线接口不允许浏览器跨域直连，必须由服务端代取。
+ * 为什么需要它：
+ * - 一年内最低价是「三好学生评分」涨幅分项的输入；
+ * - 三年内最低价用于展示截图里的「涨3」字段；
+ * - 这两类数据都不适合直接在浏览器端高并发拉取，因此统一由服务端代取。
  *
- * 数据源：腾讯 qt.gtimg.cn 行情快照。
- * 该接口直接返回 52 周高低点，规避了 web.ifzq.gtimg.cn 在当前环境下被 WAF 拦截的问题。
+ * 数据源：
+ * - 腾讯 qt.gtimg.cn 行情快照：直接返回 52 周高低点，用于一年内低点；
+ * - 东方财富 push2his 历史 K 线：逐只回看近 3 年，用于三年内低点。
  * 该模块同时被 Vite 开发中间件和独立生产服务器复用，保证两种环境行为一致。
  */
 const QUOTE_BASE = 'https://qt.gtimg.cn/q='
+const HISTORY_BASE = 'https://push2his.eastmoney.com/api/qt/stock/kline/get'
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
 
 const TIMEOUT_MS = Number(process.env.KLINE_TIMEOUT_MS || 15000)
 const MAX_SYMBOLS = Number(process.env.KLINE_MAX_SYMBOLS || 600)
 const UPSTREAM_BATCH_SIZE = Number(process.env.KLINE_UPSTREAM_BATCH_SIZE || 80)
+const HISTORY_CONCURRENCY = Number(process.env.KLINE_HISTORY_CONCURRENCY || 10)
 const MIN_DAYS = 20
-const MAX_DAYS = 400
+const MAX_DAYS = 1400
 
 const SYMBOL_PATTERN = /^(sh|sz|bj)\d{6}$/
 const LAST_CLOSE_INDEX = 3
@@ -26,6 +31,7 @@ const LOW_1Y_INDEX = 68
 /**
  * @typedef {Object} KlineEntry
  * @property {number|null} low1y 一年内最低价（前复权）
+ * @property {number|null} low3y 三年内最低价（前复权）
  * @property {number|null} high1y 一年内最高价（前复权）
  * @property {number|null} lastClose 最新收盘价（前复权）
  * @property {string|null} from 区间起始日期
@@ -67,6 +73,7 @@ const parseQuotePayload = (body) => {
 
     entries[symbol] = {
       low1y,
+      low3y: null,
       high1y,
       lastClose,
       from: null,
@@ -97,6 +104,94 @@ const fetchBatch = async (symbols) => {
   } finally {
     clearTimeout(timer)
   }
+}
+
+const symbolToSecid = (symbol) => {
+  if (/^sh\d{6}$/.test(symbol)) return `1.${symbol.slice(2)}`
+  if (/^(sz|bj)\d{6}$/.test(symbol)) return `0.${symbol.slice(2)}`
+  return null
+}
+
+const beginDateOf = (days) => {
+  const d = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}${month}${day}`
+}
+
+const fetchHistoryLow = async (symbol, days) => {
+  const secid = symbolToSecid(symbol)
+  if (!secid) return null
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+
+  try {
+    const url = new URL(HISTORY_BASE)
+    url.searchParams.set('secid', secid)
+    url.searchParams.set('fields1', 'f1,f2,f3,f4,f5,f6')
+    url.searchParams.set('fields2', 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61')
+    url.searchParams.set('klt', '101')
+    url.searchParams.set('fqt', '1')
+    url.searchParams.set('beg', beginDateOf(days))
+    url.searchParams.set('end', '20500101')
+
+    const response = await fetch(url.toString(), {
+      headers: { 'User-Agent': USER_AGENT, Referer: 'https://quote.eastmoney.com/' },
+      signal: controller.signal,
+    })
+    if (!response.ok) return null
+
+    const payload = await response.json()
+    const klines = payload?.data?.klines
+    if (!Array.isArray(klines) || klines.length === 0) return null
+
+    let low3y = null
+    let from = null
+    let to = null
+    for (const line of klines) {
+      const parts = String(line).split(',')
+      const day = parts[0] || null
+      const low = toNumber(parts[4])
+      if (day && from === null) from = day
+      if (day) to = day
+      if (low === null || low <= 0) continue
+      low3y = low3y === null ? low : Math.min(low3y, low)
+    }
+
+    if (low3y === null) return null
+    return { low3y, from, to }
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const fetchHistoryLows = async (symbols, days) => {
+  /** @type {Record<string, { low3y: number|null, from: string|null, to: string|null }>} */
+  const result = {}
+  let cursor = 0
+
+  const worker = async () => {
+    while (cursor < symbols.length) {
+      const index = cursor
+      cursor += 1
+      const symbol = symbols[index]
+      const entry = await fetchHistoryLow(symbol, days)
+      if (entry) result[symbol] = entry
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(HISTORY_CONCURRENCY, symbols.length) },
+      () => worker(),
+    ),
+  )
+
+  return result
 }
 
 /**
@@ -133,7 +228,16 @@ export const queryKline = async (codesParam, daysParam) => {
   for (let index = 0; index < symbols.length; index += UPSTREAM_BATCH_SIZE) {
     const batch = symbols.slice(index, index + UPSTREAM_BATCH_SIZE)
     try {
-      const entries = await fetchBatch(batch)
+      const [entries, history] = await Promise.all([
+        fetchBatch(batch),
+        fetchHistoryLows(batch, days),
+      ])
+      for (const symbol of Object.keys(entries)) {
+        const extra = history[symbol]
+        if (extra) {
+          entries[symbol] = { ...entries[symbol], ...extra }
+        }
+      }
       Object.assign(data, entries)
       for (const symbol of batch) {
         if (!entries[symbol]) failed.push(symbol)

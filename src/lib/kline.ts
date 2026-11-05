@@ -16,7 +16,7 @@ export type KlineBatch = {
   failed: string[]
 }
 
-/** 通过后端代理批量获取前复权一年内最低价 */
+/** 通过后端代理批量获取前复权一年/三年低价 */
 export const fetchKlines = async (
   codes: string[],
   days: number,
@@ -56,7 +56,7 @@ export const fetchKlines = async (
 
 /** 把 K 线结果回填到股票记录 */
 export const applyKline = <
-  T extends { code: string; lowPrice1y: number | null },
+  T extends { code: string; lowPrice1y: number | null; lowPrice3y: number | null },
 >(
   stocks: T[],
   kline: Record<string, KlineResult>,
@@ -64,6 +64,10 @@ export const applyKline = <
   stocks.map((stock) => {
     const symbol = toSymbol(stock.code)
     const entry = symbol ? kline[symbol] : undefined
-    if (!entry || entry.low1y === null) return stock
-    return { ...stock, lowPrice1y: entry.low1y }
+    if (!entry) return stock
+    return {
+      ...stock,
+      lowPrice1y: entry.low1y ?? stock.lowPrice1y,
+      lowPrice3y: entry.low3y ?? stock.lowPrice3y,
+    }
   })
