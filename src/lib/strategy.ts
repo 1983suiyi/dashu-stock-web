@@ -21,6 +21,9 @@ import type {
 export const PB_BASE = 0.618
 export const PB_ADJUST = 0.382
 export const MAX_SCORE = 300
+/** 公开口径的高风险兜底：先用最明显的两类财务/股权风险做硬过滤。 */
+export const MAX_GOODWILL_RATIO = 20
+export const MAX_PLEDGE_RATIO = 20
 
 /** 原始实现的线性映射：v>=hi 记 0，v<=lo 记 1（即满分） */
 const bta = (lo: number, hi: number, value: number) => {
@@ -110,6 +113,7 @@ export const scoreStocks = (
       if (priceScore === null) missingFields.push('一年内最低价')
       if (stock.dividendYield === null) missingFields.push('股息率')
       if (stock.goodwillRatio === null) missingFields.push('商誉占比')
+      if (stock.pledgeRatio === null) missingFields.push('股权质押比例')
 
       const parts = [pbScore, peScore, priceScore].filter(
         (value): value is number => value !== null,
@@ -123,12 +127,19 @@ export const scoreStocks = (
       if (stock.debtRatio !== null && industryDebtMedian !== null) {
         debtAboveIndustryMedian = stock.debtRatio > industryDebtMedian
       }
+      const goodwillTooHigh =
+        stock.goodwillRatio !== null &&
+        stock.goodwillRatio >= MAX_GOODWILL_RATIO
+      const pledgeTooHigh =
+        stock.pledgeRatio !== null && stock.pledgeRatio >= MAX_PLEDGE_RATIO
 
       if (pbScore !== null && pbScore >= 60) notes.push('PB 处于低估区间')
       if (peScore !== null && peScore >= 60) notes.push('PE 处于低估区间')
       if (priceScore !== null && priceScore >= 60) notes.push('接近一年内价格低点')
       if (debtAboveIndustryMedian === true) notes.push('资产负债率高于行业中位数')
       if (debtAboveIndustryMedian === false) notes.push('资产负债率低于行业中位数')
+      if (goodwillTooHigh) notes.push(`商誉占净资产过高(>=${MAX_GOODWILL_RATIO}%)`)
+      if (pledgeTooHigh) notes.push(`股权质押比例过高(>=${MAX_PLEDGE_RATIO}%)`)
       if (stock.dividendYield !== null && stock.dividendYield <= config.minDividendYield) {
         notes.push('股息率低于阈值')
       }
@@ -139,6 +150,8 @@ export const scoreStocks = (
         complete &&
         totalScore > config.scoreThreshold &&
         debtAboveIndustryMedian !== true &&
+        !goodwillTooHigh &&
+        !pledgeTooHigh &&
         (stock.dividendYield === null ||
           stock.dividendYield > config.minDividendYield)
 
@@ -177,6 +190,12 @@ export const pickKlineCandidates = (
       if (stock.lowPrice1y !== null) return false
       if (stock.isST) return false
       if (stock.debtAboveIndustryMedian === true) return false
+      if (stock.goodwillRatio !== null && stock.goodwillRatio >= MAX_GOODWILL_RATIO) {
+        return false
+      }
+      if (stock.pledgeRatio !== null && stock.pledgeRatio >= MAX_PLEDGE_RATIO) {
+        return false
+      }
       return (stock.pbScore ?? 0) + (stock.peScore ?? 0) > cutoff
     })
     .slice(0, config.maxKlineCandidates)

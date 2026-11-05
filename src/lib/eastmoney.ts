@@ -140,24 +140,29 @@ const latestReportDate = async (
 }
 
 /** 取最近一个交易日：按区间倒序取第一条，可自动跳过周末与节假日 */
-const latestTradeDate = async (): Promise<string> => {
+const latestTradeDateFor = async (
+  reportName: string,
+  dateField = 'TRADE_DATE',
+): Promise<string> => {
   const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000)
     .toISOString()
     .slice(0, 10)
 
   const page = await queryPage({
-    reportName: 'RPT_VALUEANALYSIS_DET',
+    reportName,
     pageNumber: 1,
     pageSize: 1,
-    sortColumns: 'TRADE_DATE',
+    sortColumns: dateField,
     sortTypes: -1,
-    filter: `(TRADE_DATE>='${since}')`,
+    filter: `(${dateField}>='${since}')`,
   })
 
-  const value = toText(page.rows[0]?.TRADE_DATE)
+  const value = toText(page.rows[0]?.[dateField])
   if (!value) throw new Error('未能获取最新交易日')
   return value.slice(0, 10)
 }
+
+const latestTradeDate = async () => latestTradeDateFor('RPT_VALUEANALYSIS_DET')
 
 const isAShare = (secucode: string) =>
   /\.(SH|SZ|BJ)$/.test(secucode) && !secucode.startsWith('9')
@@ -202,6 +207,47 @@ const dividendYieldOf = (
   if (price === null || price <= 0) return null
   if (!perShare || perShare <= 0) return 0
   return Number(((perShare / price) * 100).toFixed(2))
+}
+
+/** 最新报告期商誉占净资产比例(%)。页面对应数据中心「商誉」明细表。 */
+const fetchGoodwillRatios = async (): Promise<Map<string, number>> => {
+  const reportDate = await latestReportDate(
+    'RPT_GOODWILL_STOCKDETAILS',
+    'REPORT_DATE',
+  )
+  const rows = await queryAll({
+    reportName: 'RPT_GOODWILL_STOCKDETAILS',
+    sortColumns: 'SECURITY_CODE',
+    sortTypes: 1,
+    filter: `(REPORT_DATE='${reportDate}')`,
+  })
+
+  const ratios = new Map<string, number>()
+  for (const row of rows) {
+    const code = toText(row.SECURITY_CODE)
+    const ratio = toNumber(row.SUMSHEQUITY_RATIO)
+    if (!code || ratio === null) continue
+    ratios.set(code, Number((ratio * 100).toFixed(2)))
+  }
+  return ratios
+}
+
+/** 最新交易日股权质押比例(%)。页面对应数据中心「股权质押」最新统计表。 */
+const fetchPledgeRatios = async (): Promise<Map<string, number>> => {
+  const rows = await queryAll({
+    reportName: 'RPT_CSDC_LIST_NEWEST',
+    sortColumns: 'SECURITY_CODE',
+    sortTypes: 1,
+  })
+
+  const ratios = new Map<string, number>()
+  for (const row of rows) {
+    const code = toText(row.SECURITY_CODE)
+    const ratio = toNumber(row.PLEDGE_RATIO)
+    if (!code || ratio === null) continue
+    ratios.set(code, Number(ratio.toFixed(2)))
+  }
+  return ratios
 }
 
 export type FetchProgress = (message: string) => void
@@ -251,6 +297,12 @@ export const fetchRealMarketData = async (
   onProgress?.('正在获取近 12 个月分红数据…')
   const dividendPerShare = await fetchDividendPerShare()
 
+  onProgress?.('正在获取最新商誉与质押风险数据…')
+  const [goodwillRatios, pledgeRatios] = await Promise.all([
+    fetchGoodwillRatios(),
+    fetchPledgeRatios(),
+  ])
+
   onProgress?.('正在合并数据…')
 
   const debtByCode = new Map<string, number | null>()
@@ -299,8 +351,9 @@ export const fetchRealMarketData = async (
       marketCap: toNumber(row.TOTAL_MARKET_CAP),
       // 股息率由「近 12 个月已实施分红 / 现价」换算，见 fetchDividendPerShare
       dividendYield: dividendYieldOf(dividendPerShare.get(code), price),
-      // 商誉占净资产东财该表未提供，保持为空
-      goodwillRatio: null,
+      // 商誉 / 质押来自东财公开风险报表，缺失按 0 处理，避免空值绕过风险过滤
+      goodwillRatio: goodwillRatios.get(code) ?? 0,
+      pledgeRatio: pledgeRatios.get(code) ?? 0,
       // 由后端 K 线代理补齐
       lowPrice1y: null,
       isST: /ST/i.test(name),

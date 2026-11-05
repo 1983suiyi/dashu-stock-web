@@ -67,6 +67,7 @@ const csvHeaders = [
   'marketCap',
   'lowPrice1y',
   'goodwillRatio',
+  'pledgeRatio',
   'isST',
 ]
 
@@ -143,6 +144,7 @@ const parseCsv = (text: string): StockRecord[] => {
       marketCap: parseNumberCell(get('marketCap')),
       dividendYield: parseNumberCell(get('dividendYield')),
       goodwillRatio: parseNumberCell(get('goodwillRatio')),
+      pledgeRatio: parseNumberCell(get('pledgeRatio')),
       lowPrice1y: parseNumberCell(get('lowPrice1y')),
       isST: parseBoolean(get('isST')),
     }
@@ -421,6 +423,7 @@ function App() {
       fixed(stock.industryDebtMedian),
       fixed(stock.dividendYield),
       fixed(stock.goodwillRatio),
+      fixed(stock.pledgeRatio),
       stock.eligible ? '通过' : '未通过',
       stock.notes.join(' / '),
     ])
@@ -446,6 +449,7 @@ function App() {
           '行业资产负债率中位数(%)',
           '股息率(%)',
           '商誉占净资产(%)',
+          '股权质押比例(%)',
           '是否通过',
           '风险提示',
         ],

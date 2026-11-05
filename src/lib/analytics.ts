@@ -5,6 +5,7 @@ import type {
   ScoredStock,
   StrategyConfig,
 } from '../types'
+import { MAX_GOODWILL_RATIO, MAX_PLEDGE_RATIO } from './strategy'
 
 const average = (values: number[]) =>
   values.length === 0
@@ -195,6 +196,18 @@ export const explainStockExclusion = (
     stock.dividendYield <= config.minDividendYield
   ) {
     reasons.push(`股息率不满足 >${config.minDividendYield}% 条件`)
+  }
+  if (
+    stock.goodwillRatio !== null &&
+    stock.goodwillRatio >= MAX_GOODWILL_RATIO
+  ) {
+    reasons.push(`商誉占净资产不满足 <${MAX_GOODWILL_RATIO}% 条件`)
+  }
+  if (
+    stock.pledgeRatio !== null &&
+    stock.pledgeRatio >= MAX_PLEDGE_RATIO
+  ) {
+    reasons.push(`股权质押比例不满足 <${MAX_PLEDGE_RATIO}% 条件`)
   }
   return reasons
 }

@@ -90,6 +90,7 @@ export const demoStocks: StockRecord[] = demoRows.map(
     marketCap,
     dividendYield,
     goodwillRatio: null,
+    pledgeRatio: null,
     lowPrice1y: Number((price / (1 + gain1y)).toFixed(2)),
     isST: false,
   }),

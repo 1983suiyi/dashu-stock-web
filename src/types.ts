@@ -16,8 +16,10 @@ export type StockRecord = {
   marketCap: number | null
   /** 股息率(%)：近 12 个月已实施税前派息 / 现价 × 100，无分红记录时为 0 */
   dividendYield: number | null
-  /** 商誉占净资产(%)：当前数据源未提供，保持 null */
+  /** 商誉占净资产(%)：取最新报告期，缺失时按 0 处理 */
   goodwillRatio: number | null
+  /** 股权质押比例(%)：取最新交易日，缺失时按 0 处理 */
+  pledgeRatio: number | null
   /** 前复权一年内最低价，由后端 K 线代理补齐 */
   lowPrice1y: number | null
   isST: boolean
