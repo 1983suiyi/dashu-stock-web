@@ -1,4 +1,5 @@
 import type { DataSourceMeta, StockRecord } from '../types'
+import { normalizeIndustry } from './industry'
 
 /**
  * 东方财富数据中心公开接口。
@@ -233,11 +234,16 @@ export const fetchRealMarketData = async (
     // 退市整理期股票估值极低（实测 PB 可低至 0.03），会污染低估值选股，直接剔除
     if (name.includes('退')) continue
 
+    const sourceIndustry = toText(row.BOARD_NAME) || '未分类'
+    const { sector, industry } = normalizeIndustry(sourceIndustry)
+
     seen.add(code)
     stocks.push({
       code,
       name,
-      industry: toText(row.BOARD_NAME) || '未分类',
+      sector,
+      industry,
+      sourceIndustry,
       price: toNumber(row.CLOSE_PRICE),
       pb: toNumber(row.PB_MRQ),
       pe: toNumber(row.PE_TTM),

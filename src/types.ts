@@ -1,7 +1,12 @@
 export type StockRecord = {
   code: string
   name: string
+  /** 模拟器口径的一级行业 */
+  sector: string
+  /** 模拟器口径的细分行业 */
   industry: string
+  /** 原始数据源行业名，便于对表与回溯 */
+  sourceIndustry?: string
   price: number | null
   pb: number | null
   pe: number | null

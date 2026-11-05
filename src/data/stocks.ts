@@ -1,4 +1,5 @@
 import type { MarketSnapshot, StockRecord, StrategyConfig } from '../types'
+import { normalizeIndustry } from '../lib/industry'
 
 export const defaultMarketSnapshot: MarketSnapshot = {
   allMarketPb: 2.15,
@@ -76,9 +77,10 @@ export const demoStocks: StockRecord[] = demoRows.map(
     marketCap,
     gain1y,
   ]) => ({
+    ...normalizeIndustry(industry),
     code,
     name,
-    industry,
+    sourceIndustry: industry,
     price,
     pb,
     pe,

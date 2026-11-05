@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { defaultConfig, defaultMarketSnapshot, demoStocks } from './data/stocks'
 import { downloadCsv, toCsv } from './lib/csv'
 import { fetchRealMarketData } from './lib/eastmoney'
+import { normalizeIndustry } from './lib/industry'
 import { applyKline, fetchKlines } from './lib/kline'
 import {
   buildAiHighlights,
@@ -53,7 +54,9 @@ const researchHighlights = [
 const csvHeaders = [
   'code',
   'name',
+  'sector',
   'industry',
+  'sourceIndustry',
   'price',
   'pb',
   'pe',
@@ -122,11 +125,15 @@ const parseCsv = (text: string): StockRecord[] => {
   return rows.slice(1).map((row) => {
     const values = row.split(',').map((item) => item.trim())
     const get = (key: string) => values[headers.indexOf(key)] ?? ''
+    const sourceIndustry = get('sourceIndustry') || get('industry')
+    const { sector, industry } = normalizeIndustry(sourceIndustry)
 
     return {
       code: get('code'),
       name: get('name'),
-      industry: get('industry'),
+      sector,
+      industry,
+      sourceIndustry,
       price: parseNumberCell(get('price')),
       pb: parseNumberCell(get('pb')),
       pe: parseNumberCell(get('pe')),
@@ -398,7 +405,9 @@ function App() {
     const rows = scoredStocks.map((stock) => [
       stock.code,
       stock.name,
+      stock.sector,
       stock.industry,
+      stock.sourceIndustry ?? '',
       fixed(stock.pb),
       fixed(stock.pe),
       fixed(stock.pbScore, 1),
@@ -421,7 +430,9 @@ function App() {
         [
           '代码',
           '名称',
-          '行业',
+            '行业',
+            '细分',
+            '原始行业',
           '当前市净率',
           'PE',
           'PB得分',
@@ -449,6 +460,7 @@ function App() {
       return [
         item.code,
         item.name,
+          source?.sector ?? '',
         item.industry,
         fixed(item.score, 1),
         fixed(item.winProbability, 1),
@@ -463,7 +475,8 @@ function App() {
         [
           '代码',
           '名称',
-          '行业',
+            '行业',
+            '细分',
           '三好学生评分',
           '绝对胜算概率(%)',
           '目标权重(%)',
@@ -805,7 +818,7 @@ function App() {
                     {selectedStock.name}（{selectedStock.code}）
                   </strong>
                   <p>
-                    {selectedStock.industry} / 总分 {selectedStock.totalScore.toFixed(1)} / 状态{' '}
+                    {selectedStock.sector} / {selectedStock.industry} / 总分 {selectedStock.totalScore.toFixed(1)} / 状态{' '}
                     {selectedStock.eligible ? '通过筛选' : '未通过筛选'}
                   </p>
                 </div>
@@ -880,6 +893,7 @@ function App() {
               <th>代码</th>
               <th>名称</th>
               <th>行业</th>
+              <th>细分</th>
               <th>PB</th>
               <th>PE</th>
               <th>PB得分</th>
@@ -897,6 +911,7 @@ function App() {
               <tr key={stock.code}>
                 <td>{stock.code}</td>
                 <td>{stock.name}</td>
+                <td>{stock.sector}</td>
                 <td>{stock.industry}</td>
                 <td>{show(stock.pb)}</td>
                 <td>{show(stock.pe)}</td>
@@ -946,6 +961,7 @@ function App() {
               <th>代码</th>
               <th>名称</th>
               <th>行业</th>
+              <th>细分</th>
               <th>三好学生评分</th>
               <th>绝对胜算概率</th>
               <th>目标权重</th>
@@ -953,20 +969,24 @@ function App() {
             </tr>
           </thead>
           <tbody>
-            {portfolio.map((item) => (
-              <tr key={item.code}>
-                <td>{item.code}</td>
-                <td>{item.name}</td>
-                <td>{item.industry}</td>
-                <td>{item.score.toFixed(1)}</td>
-                <td>{show(item.winProbability, 1)}%</td>
-                <td>{(item.targetWeight * 100).toFixed(2)}%</td>
-                <td>{item.reason}</td>
-              </tr>
-            ))}
+            {portfolio.map((item) => {
+              const source = scoredStocks.find((stock) => stock.code === item.code)
+              return (
+                <tr key={item.code}>
+                  <td>{item.code}</td>
+                  <td>{item.name}</td>
+                  <td>{source?.sector ?? '—'}</td>
+                  <td>{item.industry}</td>
+                  <td>{item.score.toFixed(1)}</td>
+                  <td>{show(item.winProbability, 1)}%</td>
+                  <td>{(item.targetWeight * 100).toFixed(2)}%</td>
+                  <td>{item.reason}</td>
+                </tr>
+              )
+            })}
             {portfolio.length === 0 && (
               <tr>
-                <td colSpan={7}>
+                <td colSpan={8}>
                   暂无通过筛选的股票。请先拉取真实数据并补齐 K 线，或下调评分门槛。
                 </td>
               </tr>
