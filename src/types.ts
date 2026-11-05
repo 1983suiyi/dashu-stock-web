@@ -14,7 +14,7 @@ export type StockRecord = {
   roe: number | null
   debtRatio: number | null
   marketCap: number | null
-  /** 股息率(%)：当前数据源未提供，保持 null */
+  /** 股息率(%)：近 12 个月已实施税前派息 / 现价 × 100，无分红记录时为 0 */
   dividendYield: number | null
   /** 商誉占净资产(%)：当前数据源未提供，保持 null */
   goodwillRatio: number | null

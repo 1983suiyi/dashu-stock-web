@@ -162,6 +162,48 @@ const latestTradeDate = async (): Promise<string> => {
 const isAShare = (secucode: string) =>
   /\.(SH|SZ|BJ)$/.test(secucode) && !secucode.startsWith('9')
 
+/**
+ * 近 12 个月「已实施」的现金分红，按每股税前派息汇总（单位：元/股）。
+ *
+ * 口径：只统计除权除息日落在近 12 个月的记录（`EX_DIVIDEND_DATE`），
+ * 因此未实施、仅为预案的方案不会计入，与「已到手的分红」一致。
+ * 报表字段 `PRETAX_BONUS_RMB` 的含义是「每 10 股派息(税前)元」，故需除以 10。
+ */
+const fetchDividendPerShare = async (): Promise<Map<string, number>> => {
+  const since = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10)
+
+  const rows = await queryAll({
+    reportName: 'RPT_SHAREBONUS_DET',
+    sortColumns: 'SECURITY_CODE',
+    sortTypes: 1,
+    filter: `(EX_DIVIDEND_DATE>='${since}')`,
+  })
+
+  const perShare = new Map<string, number>()
+  for (const row of rows) {
+    const code = toText(row.SECURITY_CODE)
+    const bonusPerTen = toNumber(row.PRETAX_BONUS_RMB)
+    if (!code || bonusPerTen === null) continue
+    perShare.set(code, (perShare.get(code) ?? 0) + bonusPerTen / 10)
+  }
+  return perShare
+}
+
+/**
+ * 股息率(%) = 近 12 个月每股税前派息 / 现价 × 100。
+ * 期间没有分红记录时按 0% 处理（而非 null），否则「股息率 > 1%」的过滤会被空值绕过。
+ */
+const dividendYieldOf = (
+  perShare: number | undefined,
+  price: number | null,
+): number | null => {
+  if (price === null || price <= 0) return null
+  if (!perShare || perShare <= 0) return 0
+  return Number(((perShare / price) * 100).toFixed(2))
+}
+
 export type FetchProgress = (message: string) => void
 
 export type RealMarketData = {
@@ -206,6 +248,9 @@ export const fetchRealMarketData = async (
     filter: `(REPORTDATE='${profitDate}')`,
   })
 
+  onProgress?.('正在获取近 12 个月分红数据…')
+  const dividendPerShare = await fetchDividendPerShare()
+
   onProgress?.('正在合并数据…')
 
   const debtByCode = new Map<string, number | null>()
@@ -236,6 +281,7 @@ export const fetchRealMarketData = async (
 
     const sourceIndustry = toText(row.BOARD_NAME) || '未分类'
     const { sector, industry } = normalizeIndustry(sourceIndustry)
+    const price = toNumber(row.CLOSE_PRICE)
 
     seen.add(code)
     stocks.push({
@@ -244,15 +290,16 @@ export const fetchRealMarketData = async (
       sector,
       industry,
       sourceIndustry,
-      price: toNumber(row.CLOSE_PRICE),
+      price,
       pb: toNumber(row.PB_MRQ),
       pe: toNumber(row.PE_TTM),
       ps: toNumber(row.PS_TTM),
       roe: roeByCode.get(code) ?? null,
       debtRatio: debtByCode.get(code) ?? null,
       marketCap: toNumber(row.TOTAL_MARKET_CAP),
-      // 以下字段东财该表未提供，保持为空：股息率/商誉需另找数据源
-      dividendYield: null,
+      // 股息率由「近 12 个月已实施分红 / 现价」换算，见 fetchDividendPerShare
+      dividendYield: dividendYieldOf(dividendPerShare.get(code), price),
+      // 商誉占净资产东财该表未提供，保持为空
       goodwillRatio: null,
       // 由后端 K 线代理补齐
       lowPrice1y: null,

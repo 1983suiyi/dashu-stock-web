@@ -146,7 +146,7 @@ const topScoreGaps = report
 const notes = [
   '本脚本仅作对比校验，不参与任何运行时逻辑。',
   'debt_median_export 与 debt_median_local 不一致属预期：模拟器该值来自其私有后端常量，本地为公开口径现算结果。',
-  '评分差异主要来自缺失字段（股息率/商誉/质押率等）与行业口径差异。',
+  '评分差异主要来自行业口径差异与缺失字段（商誉、质押率等）。',
 ]
 
 console.log(
