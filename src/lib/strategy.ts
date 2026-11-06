@@ -152,9 +152,13 @@ export const scoreStocks = (
       const winProbability = complete ? totalScore / 3 : null
 
       const industryDebtMedian = debtMedians.get(stock.industry) ?? null
+      const industryDebtMedianLimit =
+        industryDebtMedian === null
+          ? null
+          : industryDebtMedian * (1 + config.debtMedianTolerance)
       let debtAboveIndustryMedian: boolean | null = null
-      if (stock.debtRatio !== null && industryDebtMedian !== null) {
-        debtAboveIndustryMedian = stock.debtRatio > industryDebtMedian
+      if (stock.debtRatio !== null && industryDebtMedianLimit !== null) {
+        debtAboveIndustryMedian = stock.debtRatio > industryDebtMedianLimit
       }
       const goodwillTooHigh =
         stock.goodwillRatio !== null &&
@@ -165,8 +169,12 @@ export const scoreStocks = (
       if (pbScore !== null && pbScore >= 60) notes.push('PB 处于低估区间')
       if (peScore !== null && peScore >= 60) notes.push('PE 处于低估区间')
       if (priceScore !== null && priceScore >= 60) notes.push('接近一年内价格低点')
-      if (debtAboveIndustryMedian === true) notes.push('资产负债率高于行业中位数')
-      if (debtAboveIndustryMedian === false) notes.push('资产负债率低于行业中位数')
+      if (debtAboveIndustryMedian === true) {
+        notes.push(
+          `资产负债率超行业中位数宽容上限(中位数 × ${(1 + config.debtMedianTolerance).toFixed(2)})`,
+        )
+      }
+      if (debtAboveIndustryMedian === false) notes.push('资产负债率在中位数宽容区间内')
       if (goodwillTooHigh) notes.push(`商誉占净资产过高(>=${MAX_GOODWILL_RATIO}%)`)
       if (pledgeTooHigh) notes.push(`股权质押比例过高(>=${MAX_PLEDGE_RATIO}%)`)
       if (stock.dividendYield !== null && stock.dividendYield <= config.minDividendYield) {
@@ -197,6 +205,7 @@ export const scoreStocks = (
         pbBand: [pbLo, pbHi],
         peBand: [peLo, peHi],
         industryDebtMedian,
+        industryDebtMedianLimit,
         debtAboveIndustryMedian,
         eligible,
         notes,

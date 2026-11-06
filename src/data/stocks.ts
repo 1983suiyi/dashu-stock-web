@@ -9,11 +9,13 @@ export const defaultMarketSnapshot: MarketSnapshot = {
 /**
  * 默认参数对应「大数模拟器」的口径：
  * 门槛 200 分（≡ 绝对胜算概率 66.67%）、满配过滤单行业 3%、总仓位不超 2/3。
+ * 资产负债率判定放宽到「行业中位数 × 1.15」，避免紧贴中位数的优质股被误杀。
  */
 export const defaultConfig: StrategyConfig = {
   discount: 1,
   scoreThreshold: 200,
   minDividendYield: 1,
+  debtMedianTolerance: 0.15,
   maxIndustryWeight: 0.03,
   maxEquityExposure: 0.6667,
   klineDays: 1100,

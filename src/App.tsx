@@ -439,6 +439,7 @@ function App() {
       yi(stock.marketCap),
       fixed(stock.debtRatio),
       fixed(stock.industryDebtMedian),
+      fixed(stock.industryDebtMedianLimit),
       fixed(stock.dividendYield),
       fixed(stock.goodwillRatio),
       fixed(stock.pledgeRatio),
@@ -471,6 +472,7 @@ function App() {
           '总市值(亿)',
           '资产负债率(%)',
           '行业资产负债率中位数(%)',
+          '行业资产负债率宽容上限(%)',
           '股息率(%)',
           '商誉占净资产(%)',
           '股权质押比例(%)',
@@ -758,6 +760,22 @@ function App() {
               />
             </label>
             <label>
+              负债率宽容幅度（0.15 = 中位数 ×1.15）
+              <input
+                type="number"
+                step="0.01"
+                value={config.debtMedianTolerance}
+                min={0}
+                max={1}
+                onChange={(event) =>
+                  handleConfigChange(
+                    'debtMedianTolerance',
+                    Number(event.target.value),
+                  )
+                }
+              />
+            </label>
+            <label>
               满配过滤：单行业上限
               <input
                 type="number"
@@ -864,8 +882,9 @@ function App() {
                 <span>现价 {show(selectedStock.price)}</span>
                 <span>扫雷宝 {selectedStock.mineScore}</span>
                 <span>
-                  资产负债率 {show(selectedStock.debtRatio, 1)} /{' '}
-                  {show(selectedStock.industryDebtMedian, 1)}
+                  资产负债率 {show(selectedStock.debtRatio, 1)} / 中位数{' '}
+                  {show(selectedStock.industryDebtMedian, 1)} / 上限{' '}
+                  {show(selectedStock.industryDebtMedianLimit, 1)}
                 </span>
                 <span>涨1 {gainView(selectedStock.gain1y, 0)}</span>
                 <span>涨3 {gainView(selectedStock.gain3y, 0)}</span>
@@ -901,6 +920,8 @@ function App() {
         <h2>大数评分</h2>
         <p>
           按截图补齐名称/代码、行业/细分、持仓、大数分、现价、涨1、涨3、扫雷宝与风险字段。
+          资产负债率判定放宽到「行业中位数 ×{' '}
+          {(1 + config.debtMedianTolerance).toFixed(2)}」。
         </p>
       </div>
 
@@ -937,7 +958,7 @@ function App() {
               <th>股息率</th>
               <th>质押率</th>
               <th>商誉</th>
-              <th>资产负债</th>
+              <th>资产负债 / 宽容上限</th>
               <th>状态</th>
               <th>风险提示</th>
             </tr>
@@ -969,7 +990,7 @@ function App() {
                 <td>{percentView(stock.pledgeRatio, 1)}</td>
                 <td>{percentView(stock.goodwillRatio, 1)}</td>
                 <td>
-                  {show(stock.debtRatio, 1)} / {show(stock.industryDebtMedian, 1)}
+                  {show(stock.debtRatio, 1)} / {show(stock.industryDebtMedianLimit, 1)}
                 </td>
                 <td>
                   <span className={stock.eligible ? 'status ok' : 'status muted'}>

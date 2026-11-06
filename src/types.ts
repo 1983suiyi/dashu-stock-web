@@ -39,6 +39,8 @@ export type StrategyConfig = {
   scoreThreshold: number
   /** 股息率下限(%) */
   minDividendYield: number
+  /** 资产负债率宽容幅度：允许高于行业中位数多少（0.15 = 中位数 × 1.15） */
+  debtMedianTolerance: number
   /** 满配过滤：单个行业持仓权重上限 */
   maxIndustryWeight: number
   /** 总权益仓位上限，默认 2/3 */
@@ -64,6 +66,8 @@ export type ScoredStock = StockRecord & {
   pbBand: [number, number]
   peBand: [number, number]
   industryDebtMedian: number | null
+  /** 行业中位数叠加宽容幅度后的判定上限 */
+  industryDebtMedianLimit: number | null
   debtAboveIndustryMedian: boolean | null
   eligible: boolean
   notes: string[]
