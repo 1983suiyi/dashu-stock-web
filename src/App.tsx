@@ -24,6 +24,7 @@ import {
 import type {
   DataSourceMeta,
   MarketSnapshot,
+  PortfolioHolding,
   StockRecord,
   StrategyConfig,
 } from './types'
@@ -91,7 +92,22 @@ type ArchiveSnapshot = {
   dataMeta: DataSourceMeta | null
 }
 
+type HoldingImport = {
+  code: string
+  name: string
+  weight: number | null
+  source: 'manual' | 'csv'
+}
+
+type HoldingDetail = PortfolioHolding & {
+  sector: string
+  price: number | null
+  sourceLabel: string
+  weightKnown: boolean
+}
+
 const ARCHIVE_STORAGE_KEY = 'dashu-workspace-archives'
+const HOLDING_STORAGE_KEY = 'dashu-user-holdings'
 
 const navItems: Array<{ key: WorkspaceView; label: string }> = [
   { key: 'overview', label: '市场概况' },
@@ -106,12 +122,71 @@ const navItems: Array<{ key: WorkspaceView; label: string }> = [
 const parseBoolean = (value: string) =>
   ['true', '1', 'yes', 'y', '是'].includes(value.trim().toLowerCase())
 
+const splitCsvLine = (line: string) => {
+  const cells: string[] = []
+  let current = ''
+  let inQuotes = false
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]
+
+    if (char === '"') {
+      const next = line[index + 1]
+      if (inQuotes && next === '"') {
+        current += '"'
+        index += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+
+    if (char === ',' && !inQuotes) {
+      cells.push(current.trim())
+      current = ''
+      continue
+    }
+
+    current += char
+  }
+
+  cells.push(current.trim())
+  return cells
+}
+
 /** 空单元格统一解析为 null，避免 Number('') = 0 污染估值判定 */
 const parseNumberCell = (value: string): number | null => {
   const trimmed = value.trim()
   if (!trimmed) return null
   const parsed = Number(trimmed)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+const parseLooseNumber = (value: string): number | null => {
+  const trimmed = value.trim().replace(/,/g, '').replace(/%/g, '')
+  if (!trimmed) return null
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const toRatio = (value: string): number | null => {
+  const parsed = parseLooseNumber(value)
+  if (parsed === null) return null
+  if (parsed > 0 && parsed <= 1) return parsed
+  if (parsed > 1 && parsed <= 100) return parsed / 100
+  return null
+}
+
+const normalizeCode = (value: string) => {
+  const matched = value.match(/\d{6}/)
+  return matched ? matched[0] : ''
+}
+
+const headerIndexOf = (headers: string[], aliases: string[]) => {
+  const normalizedAliases = aliases.map((item) => normalize(item))
+  return headers.findIndex((header) =>
+    normalizedAliases.includes(normalize(header.replace(/\uFEFF/g, ''))),
+  )
 }
 
 const parseCsv = (text: string): StockRecord[] => {
@@ -123,9 +198,9 @@ const parseCsv = (text: string): StockRecord[] => {
 
   if (rows.length <= 1) return []
 
-  const headers = rows[0].split(',').map((item) => item.trim())
+  const headers = splitCsvLine(rows[0])
   return rows.slice(1).map((row) => {
-    const values = row.split(',').map((item) => item.trim())
+    const values = splitCsvLine(row)
     const get = (key: string) => values[headers.indexOf(key)] ?? ''
     const sourceIndustry = get('sourceIndustry') || get('industry')
     const { sector, industry } = normalizeIndustry(sourceIndustry)
@@ -151,6 +226,89 @@ const parseCsv = (text: string): StockRecord[] => {
       isST: parseBoolean(get('isST')),
     }
   })
+}
+
+const parseHoldingsCsv = (text: string): HoldingImport[] => {
+  const rows = text
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (rows.length <= 1) return []
+
+  const headers = splitCsvLine(rows[0])
+  const codeIndex = headerIndexOf(headers, ['code', '代码', '证券代码', '股票代码'])
+  if (codeIndex < 0) return []
+
+  const nameIndex = headerIndexOf(headers, ['name', '名称', '证券名称', '股票名称'])
+  const weightIndex = headerIndexOf(headers, [
+    'weight',
+    '仓位',
+    '持仓占比',
+    '持仓比例',
+    '仓位占比',
+    '权重',
+    '目标权重',
+  ])
+  const marketValueIndex = headerIndexOf(headers, [
+    '市值',
+    '持仓市值',
+    '参考市值',
+    '证券市值',
+    '最新市值',
+  ])
+
+  const rawItems = rows
+    .slice(1)
+    .map((row) => splitCsvLine(row))
+    .map((values) => ({
+      code: normalizeCode(values[codeIndex] ?? ''),
+      name: nameIndex >= 0 ? (values[nameIndex] ?? '').trim() : '',
+      weight: weightIndex >= 0 ? toRatio(values[weightIndex] ?? '') : null,
+      marketValue:
+        marketValueIndex >= 0 ? parseLooseNumber(values[marketValueIndex] ?? '') : null,
+    }))
+    .filter((item) => item.code)
+
+  if (rawItems.length === 0) return []
+
+  const hasDirectWeight = rawItems.some((item) => item.weight !== null)
+  const totalMarketValue = rawItems.reduce(
+    (sum, item) => sum + Math.max(0, item.marketValue ?? 0),
+    0,
+  )
+
+  const grouped = new Map<string, HoldingImport>()
+  for (const item of rawItems) {
+    const existing = grouped.get(item.code)
+    const derivedWeight =
+      item.weight ??
+      (!hasDirectWeight && totalMarketValue > 0 && item.marketValue !== null
+        ? item.marketValue / totalMarketValue
+        : null)
+
+    if (existing) {
+      grouped.set(item.code, {
+        ...existing,
+        name: existing.name || item.name,
+        weight:
+          existing.weight !== null && derivedWeight !== null
+            ? existing.weight + derivedWeight
+            : existing.weight ?? derivedWeight,
+      })
+      continue
+    }
+
+    grouped.set(item.code, {
+      code: item.code,
+      name: item.name,
+      weight: derivedWeight,
+      source: 'csv',
+    })
+  }
+
+  return [...grouped.values()]
 }
 
 const fixed = (value: number | null, digits = 2) =>
@@ -188,6 +346,9 @@ function App() {
   const [stockQuery, setStockQuery] = useState('000589')
   const [industryQuery, setIndustryQuery] = useState('')
   const [snapshots, setSnapshots] = useState<ArchiveSnapshot[]>([])
+  const [holdingImports, setHoldingImports] = useState<HoldingImport[]>([])
+  const [holdingCodeInput, setHoldingCodeInput] = useState('')
+  const [holdingWeightInput, setHoldingWeightInput] = useState('')
 
   useEffect(() => {
     try {
@@ -199,6 +360,25 @@ function App() {
       setSnapshots([])
     }
   }, [])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(HOLDING_STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as HoldingImport[]
+      setHoldingImports(Array.isArray(parsed) ? parsed : [])
+    } catch {
+      setHoldingImports([])
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(HOLDING_STORAGE_KEY, JSON.stringify(holdingImports))
+    } catch {
+      // localStorage 超限时保留内存态，不打断主流程
+    }
+  }, [holdingImports])
 
   const scoredStocks = useMemo(
     () => scoreStocks(stocks, config),
@@ -212,9 +392,32 @@ function App() {
     () => recommendPortfolio(scoredStocks, config, market),
     [scoredStocks, config, market],
   )
-  const portfolioWeightByCode = useMemo(
-    () => new Map(portfolio.map((item) => [item.code, item.targetWeight])),
-    [portfolio],
+  const holdingDetails = useMemo<HoldingDetail[]>(() => {
+    return holdingImports
+      .map((item) => {
+        const scoredMatched = scoredStocks.find((stock) => stock.code === item.code)
+        const stockMatched =
+          scoredMatched ?? stocks.find((stock) => stock.code === item.code)
+
+        return {
+          code: item.code,
+          name: stockMatched?.name ?? item.name ?? item.code,
+          sector: stockMatched?.sector ?? '—',
+          industry: stockMatched?.industry ?? '未匹配',
+          score: scoredMatched?.totalScore ?? 0,
+          winProbability: scoredMatched?.winProbability ?? null,
+          targetWeight: item.weight ?? 0,
+          weightKnown: item.weight !== null,
+          price: stockMatched?.price ?? null,
+          reason: item.source === 'manual' ? '手动添加' : 'CSV 导入',
+          sourceLabel: item.source === 'manual' ? '手动添加' : '同花顺/CSV 导入',
+        }
+      })
+      .sort((a, b) => (b.targetWeight || 0) - (a.targetWeight || 0) || b.score - a.score)
+  }, [holdingImports, scoredStocks, stocks])
+  const holdingWeightByCode = useMemo(
+    () => new Map(holdingDetails.map((item) => [item.code, item.targetWeight])),
+    [holdingDetails],
   )
   const marketSummary = useMemo(() => summarizeMarket(market), [market])
   const exposure = useMemo(() => portfolioExposure(portfolio), [portfolio])
@@ -223,6 +426,10 @@ function App() {
     [scoredStocks],
   )
   const portfolioSummaries = useMemo(
+    () => summarizePortfolioIndustries(holdingDetails),
+    [holdingDetails],
+  )
+  const recommendedPortfolioSummaries = useMemo(
     () => summarizePortfolioIndustries(portfolio),
     [portfolio],
   )
@@ -375,6 +582,76 @@ function App() {
     }
   }
 
+  const handleHoldingsImport = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    try {
+      const text = await file.text()
+      const parsed = parseHoldingsCsv(text)
+      if (parsed.length === 0) {
+        setMessage('持仓 CSV 已读取，但未识别到有效持仓行。')
+        return
+      }
+
+      setHoldingImports(parsed)
+      setWarning('')
+      setMessage(`已导入 ${parsed.length} 条持仓记录。`)
+      setActiveView('portfolio')
+    } catch (error) {
+      setMessage(`持仓导入失败：${String(error)}`)
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  const handleAddHolding = () => {
+    const code = normalizeCode(holdingCodeInput)
+    const weight = toRatio(holdingWeightInput)
+
+    if (!code) {
+      setWarning('请先输入 6 位股票代码。')
+      return
+    }
+    if (weight === null) {
+      setWarning('请填写有效的持仓占比，例如 3 或 3%。')
+      return
+    }
+
+    const matched =
+      scoredStocks.find((stock) => stock.code === code) ??
+      stocks.find((stock) => stock.code === code)
+
+    setHoldingImports((current) => {
+      const next = current.filter((item) => item.code !== code)
+      return [
+        ...next,
+        {
+          code,
+          name: matched?.name ?? code,
+          weight,
+          source: 'manual',
+        },
+      ]
+    })
+    setHoldingCodeInput('')
+    setHoldingWeightInput('')
+    setWarning('')
+    setMessage(`已添加持仓：${matched?.name ?? code}，持仓占比 ${(weight * 100).toFixed(2)}%。`)
+  }
+
+  const handleDeleteHolding = (code: string) => {
+    setHoldingImports((current) => current.filter((item) => item.code !== code))
+    setMessage(`已移除持仓：${code}`)
+  }
+
+  const handleClearHoldings = () => {
+    setHoldingImports([])
+    setMessage('已清空当前持仓列表。')
+  }
+
   const handleRestoreDemo = () => {
     setStocks(demoStocks)
     setMarket(defaultMarketSnapshot)
@@ -423,7 +700,9 @@ function App() {
       stock.sector,
       stock.industry,
       stock.sourceIndustry ?? '',
-      ((portfolioWeightByCode.get(stock.code) ?? 0) * 100).toFixed(2),
+      holdingWeightByCode.has(stock.code)
+        ? ((holdingWeightByCode.get(stock.code) ?? 0) * 100).toFixed(2)
+        : '',
       fixed(stock.mineScore, 0),
       fixed(stock.pb),
       fixed(stock.pe),
@@ -486,33 +765,32 @@ function App() {
   }
 
   const exportPortfolio = () => {
-    const rows = portfolio.map((item) => {
-      const source = scoredStocks.find((stock) => stock.code === item.code)
+    const rows = holdingDetails.map((item) => {
       return [
         item.code,
         item.name,
-          source?.sector ?? '',
+        item.sector,
         item.industry,
-        fixed(item.score, 1),
+        item.score > 0 ? fixed(item.score, 1) : '',
         fixed(item.winProbability, 1),
-        (item.targetWeight * 100).toFixed(2),
-        fixed(source?.price ?? null),
-        item.reason,
+        item.weightKnown ? (item.targetWeight * 100).toFixed(2) : '',
+        fixed(item.price),
+        item.sourceLabel,
       ]
     })
     downloadCsv(
-      '大数持仓.csv',
+      '当前持仓.csv',
       toCsv(
         [
           '代码',
           '名称',
-            '行业',
-            '细分',
+          '行业',
+          '细分',
           '三好学生评分',
           '绝对胜算概率(%)',
-          '目标权重(%)',
+          '持仓占比(%)',
           '现价',
-          '入选原因',
+          '来源',
         ],
         rows,
       ),
@@ -569,7 +847,7 @@ function App() {
     const reasons = explainStockExclusion(selectedStock, config)
     if (reasons.length > 0) return reasons
 
-    const industryHolding = portfolioSummaries.find(
+    const industryHolding = recommendedPortfolioSummaries.find(
       (item) => item.industry === selectedStock.industry,
     )
     if (
@@ -582,7 +860,7 @@ function App() {
       return ['推荐组合总权益仓位已满，当前股票虽合格但未进入前排持仓位。']
     }
     return ['当前未入选，通常是排序落后于更高分股票。']
-  }, [config, exposure, portfolio, portfolioSummaries, selectedStock])
+  }, [config, exposure, portfolio, recommendedPortfolioSummaries, selectedStock])
 
   const overviewSection = (
     <>
@@ -651,7 +929,7 @@ function App() {
           <button
             type="button"
             onClick={exportPortfolio}
-            disabled={portfolio.length === 0}
+            disabled={holdingDetails.length === 0}
           >
             导出持仓 CSV
           </button>
@@ -662,7 +940,7 @@ function App() {
             归档当前结果
           </button>
           <label className="file-button">
-            导入 CSV
+            导入股票池 CSV
             <input type="file" accept=".csv" onChange={handleFileImport} />
           </label>
           <button type="button" onClick={handleRestoreDemo} disabled={loading}>
@@ -710,7 +988,7 @@ function App() {
         </p>
         <p className="helper-text">
           当前已接入<strong>股息率</strong>、<strong>商誉占净资产</strong>与
-          <strong>股权质押比例</strong>；扫雷宝展示的是当前公开口径结果。导入字段：
+          <strong>股权质押比例</strong>；扫雷宝展示的是当前公开口径结果。股票池导入字段：
           <code>{csvHeaders.join(', ')}</code>
         </p>
       </section>
@@ -921,6 +1199,7 @@ function App() {
         <h2>大数评分</h2>
         <p>
           按截图补齐名称/代码、行业/细分、持仓、大数分、现价、涨1、涨3、扫雷宝与风险字段。
+          这里的“持仓”展示你的实际持仓占比，不再使用系统自动生成的推荐权重。
           资产负债率判定放宽到「行业中位数 ×{' '}
           {(1 + config.debtMedianTolerance).toFixed(2)}」。
         </p>
@@ -981,7 +1260,11 @@ function App() {
                   <div>{stock.sector}</div>
                   <div className="helper-text">{stock.industry}</div>
                 </td>
-                <td>{((portfolioWeightByCode.get(stock.code) ?? 0) * 100).toFixed(0)}%</td>
+                <td>
+                  {holdingWeightByCode.has(stock.code)
+                    ? `${((holdingWeightByCode.get(stock.code) ?? 0) * 100).toFixed(0)}%`
+                    : '—'}
+                </td>
                 <td>
                   <div>{show(stock.winProbability, 1)}</div>
                   <div className="helper-text">{stock.totalScore.toFixed(0)}</div>
@@ -1042,10 +1325,45 @@ function App() {
       <div className="section-title">
         <h2>持仓</h2>
         <p>
-          按三好学生评分从高到低选入，单行业持仓不超过{' '}
-          {(config.maxIndustryWeight * 100).toFixed(0)}%，总仓位不超过 2/3。
+          持仓由你手动维护，或者通过同花顺/券商导出的 CSV 导入；系统只负责基于当前股票池补齐评分与诊断信息。
         </p>
       </div>
+      <div className="action-row">
+        <label className="inline-search">
+          <span>股票代码</span>
+          <input
+            value={holdingCodeInput}
+            onChange={(event) => setHoldingCodeInput(event.target.value)}
+            placeholder="例如 600036"
+          />
+        </label>
+        <label className="inline-search">
+          <span>持仓占比(%)</span>
+          <input
+            value={holdingWeightInput}
+            onChange={(event) => setHoldingWeightInput(event.target.value)}
+            placeholder="例如 3 或 3%"
+          />
+        </label>
+        <button type="button" onClick={handleAddHolding}>
+          添加持仓
+        </button>
+        <label className="file-button">
+          导入持仓 CSV
+          <input type="file" accept=".csv" onChange={handleHoldingsImport} />
+        </label>
+        <button
+          type="button"
+          className="button-secondary"
+          onClick={handleClearHoldings}
+          disabled={holdingDetails.length === 0}
+        >
+          清空持仓
+        </button>
+      </div>
+      <p className="helper-text">
+        支持直接导入同花顺/通用 CSV。优先识别“持仓占比/仓位/权重”，若缺少占比但存在“市值/持仓市值”，则会按市值自动折算持仓占比。
+      </p>
       <div className="table-wrap">
         <table>
           <thead>
@@ -1056,30 +1374,41 @@ function App() {
               <th>细分</th>
               <th>三好学生评分</th>
               <th>绝对胜算概率</th>
-              <th>目标权重</th>
-              <th>入选原因</th>
+              <th>持仓占比</th>
+              <th>现价</th>
+              <th>来源</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
-            {portfolio.map((item) => {
-              const source = scoredStocks.find((stock) => stock.code === item.code)
+            {holdingDetails.map((item) => {
               return (
                 <tr key={item.code}>
                   <td>{item.code}</td>
                   <td>{item.name}</td>
-                  <td>{source?.sector ?? '—'}</td>
+                  <td>{item.sector}</td>
                   <td>{item.industry}</td>
-                  <td>{item.score.toFixed(1)}</td>
-                  <td>{show(item.winProbability, 1)}%</td>
-                  <td>{(item.targetWeight * 100).toFixed(2)}%</td>
-                  <td>{item.reason}</td>
+                  <td>{item.score > 0 ? item.score.toFixed(1) : '—'}</td>
+                  <td>{percentView(item.winProbability, 1)}</td>
+                  <td>{item.weightKnown ? `${(item.targetWeight * 100).toFixed(2)}%` : '—'}</td>
+                  <td>{show(item.price)}</td>
+                  <td>{item.sourceLabel}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="risk-trigger"
+                      onClick={() => handleDeleteHolding(item.code)}
+                    >
+                      删除
+                    </button>
+                  </td>
                 </tr>
               )
             })}
-            {portfolio.length === 0 && (
+            {holdingDetails.length === 0 && (
               <tr>
-                <td colSpan={8}>
-                  暂无通过筛选的股票。请先拉取最新数据并补齐 K 线，或下调评分门槛。
+                <td colSpan={10}>
+                  暂无持仓数据。请手动添加，或导入同花顺导出的持仓 CSV。
                 </td>
               </tr>
             )}
@@ -1093,7 +1422,7 @@ function App() {
     <section className="panel">
       <div className="section-title">
         <h2>持仓汇总</h2>
-        <p>按行业聚合推荐组合，方便看持仓分散度和行业权重占用情况。</p>
+        <p>按你的实际持仓聚合行业，方便看仓位分散度和行业权重占用情况。</p>
       </div>
       <div className="table-wrap">
         <table>
@@ -1101,7 +1430,7 @@ function App() {
             <tr>
               <th>行业</th>
               <th>持仓数</th>
-              <th>目标权重</th>
+              <th>持仓占比</th>
               <th>平均评分</th>
               <th>平均胜算</th>
               <th>股票代码</th>
@@ -1120,7 +1449,7 @@ function App() {
             ))}
             {portfolioSummaries.length === 0 && (
               <tr>
-                <td colSpan={6}>暂无持仓汇总数据。</td>
+                <td colSpan={6}>暂无持仓汇总数据，请先录入你的持仓。</td>
               </tr>
             )}
           </tbody>
