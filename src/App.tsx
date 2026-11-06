@@ -941,7 +941,7 @@ function App() {
         <span className="helper-text">共 {visibleStocks.length} 条</span>
       </div>
 
-      <div className="table-wrap tall">
+      <div className="table-wrap tall sticky-head">
         <table>
           <thead>
             <tr>
@@ -1267,13 +1267,15 @@ function App() {
       </aside>
 
       <main className="workspace-main">
-        <button
-          type="button"
-          className="sidebar-toggle"
-          onClick={() => setSidebarVisible((current) => !current)}
-        >
-          {sidebarVisible ? '隐藏菜单' : '显示菜单'}
-        </button>
+        <div className="sidebar-toggle-bar">
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setSidebarVisible((current) => !current)}
+          >
+            {sidebarVisible ? '隐藏菜单' : '显示菜单'}
+          </button>
+        </div>
 
         {activeView === 'overview' && overviewSection}
         {activeView === 'scores' && scoreSection}
