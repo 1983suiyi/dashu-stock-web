@@ -19,7 +19,11 @@ const USER_AGENT =
 const TIMEOUT_MS = Number(process.env.KLINE_TIMEOUT_MS || 15000)
 const MAX_SYMBOLS = Number(process.env.KLINE_MAX_SYMBOLS || 600)
 const UPSTREAM_BATCH_SIZE = Number(process.env.KLINE_UPSTREAM_BATCH_SIZE || 80)
-const HISTORY_CONCURRENCY = Number(process.env.KLINE_HISTORY_CONCURRENCY || 10)
+const HISTORY_CONCURRENCY = Number(process.env.KLINE_HISTORY_CONCURRENCY || 2)
+const HISTORY_RETRY = Number(process.env.KLINE_HISTORY_RETRY || 2)
+const HISTORY_BATCH_DELAY_MS = Number(
+  process.env.KLINE_HISTORY_BATCH_DELAY_MS || 1200,
+)
 const MIN_DAYS = 20
 const MAX_DAYS = 1400
 
@@ -42,6 +46,8 @@ const toNumber = (value) => {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
 }
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
  * 腾讯快照接口字段位置中：
@@ -123,50 +129,59 @@ const beginDateOf = (days) => {
 const fetchHistoryLow = async (symbol, days) => {
   const secid = symbolToSecid(symbol)
   if (!secid) return null
+  for (let attempt = 0; attempt <= HISTORY_RETRY; attempt += 1) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+    try {
+      const url = new URL(HISTORY_BASE)
+      url.searchParams.set('secid', secid)
+      url.searchParams.set('fields1', 'f1,f2,f3,f4,f5,f6')
+      url.searchParams.set('fields2', 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61')
+      url.searchParams.set('klt', '101')
+      url.searchParams.set('fqt', '1')
+      url.searchParams.set('beg', beginDateOf(days))
+      url.searchParams.set('end', '20500101')
 
-  try {
-    const url = new URL(HISTORY_BASE)
-    url.searchParams.set('secid', secid)
-    url.searchParams.set('fields1', 'f1,f2,f3,f4,f5,f6')
-    url.searchParams.set('fields2', 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61')
-    url.searchParams.set('klt', '101')
-    url.searchParams.set('fqt', '1')
-    url.searchParams.set('beg', beginDateOf(days))
-    url.searchParams.set('end', '20500101')
+      const response = await fetch(url.toString(), {
+        headers: {
+          'User-Agent': USER_AGENT,
+          Referer: 'https://quote.eastmoney.com/',
+        },
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        if (attempt < HISTORY_RETRY) await sleep(250 * (attempt + 1))
+        continue
+      }
 
-    const response = await fetch(url.toString(), {
-      headers: { 'User-Agent': USER_AGENT, Referer: 'https://quote.eastmoney.com/' },
-      signal: controller.signal,
-    })
-    if (!response.ok) return null
+      const payload = await response.json()
+      const klines = payload?.data?.klines
+      if (!Array.isArray(klines) || klines.length === 0) return null
 
-    const payload = await response.json()
-    const klines = payload?.data?.klines
-    if (!Array.isArray(klines) || klines.length === 0) return null
+      let low3y = null
+      let from = null
+      let to = null
+      for (const line of klines) {
+        const parts = String(line).split(',')
+        const day = parts[0] || null
+        const low = toNumber(parts[4])
+        if (day && from === null) from = day
+        if (day) to = day
+        if (low === null || low <= 0) continue
+        low3y = low3y === null ? low : Math.min(low3y, low)
+      }
 
-    let low3y = null
-    let from = null
-    let to = null
-    for (const line of klines) {
-      const parts = String(line).split(',')
-      const day = parts[0] || null
-      const low = toNumber(parts[4])
-      if (day && from === null) from = day
-      if (day) to = day
-      if (low === null || low <= 0) continue
-      low3y = low3y === null ? low : Math.min(low3y, low)
+      if (low3y === null) return null
+      return { low3y, from, to }
+    } catch {
+      if (attempt < HISTORY_RETRY) await sleep(250 * (attempt + 1))
+    } finally {
+      clearTimeout(timer)
     }
-
-    if (low3y === null) return null
-    return { low3y, from, to }
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timer)
   }
+
+  return null
 }
 
 const fetchHistoryLows = async (symbols, days) => {
@@ -244,6 +259,9 @@ export const queryKline = async (codesParam, daysParam) => {
       }
     } catch {
       failed.push(...batch)
+    }
+    if (index + UPSTREAM_BATCH_SIZE < symbols.length) {
+      await sleep(HISTORY_BATCH_DELAY_MS)
     }
   }
 

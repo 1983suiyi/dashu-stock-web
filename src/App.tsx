@@ -184,6 +184,7 @@ function App() {
   const [progress, setProgress] = useState('')
   const [onlyEligible, setOnlyEligible] = useState(false)
   const [activeView, setActiveView] = useState<WorkspaceView>('overview')
+  const [sidebarVisible, setSidebarVisible] = useState(true)
   const [stockQuery, setStockQuery] = useState('000589')
   const [industryQuery, setIndustryQuery] = useState('')
   const [snapshots, setSnapshots] = useState<ArchiveSnapshot[]>([])
@@ -1241,8 +1242,8 @@ function App() {
   )
 
   return (
-    <div className="workspace-shell">
-      <aside className="sidebar">
+    <div className={sidebarVisible ? 'workspace-shell' : 'workspace-shell sidebar-collapsed'}>
+      <aside className={sidebarVisible ? 'sidebar' : 'sidebar hidden'}>
         <div className="sidebar-header">
           <strong>大数工作台</strong>
           <p>suiyi / 研究模式</p>
@@ -1266,6 +1267,14 @@ function App() {
       </aside>
 
       <main className="workspace-main">
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={() => setSidebarVisible((current) => !current)}
+        >
+          {sidebarVisible ? '隐藏菜单' : '显示菜单'}
+        </button>
+
         {activeView === 'overview' && overviewSection}
         {activeView === 'scores' && scoreSection}
         {activeView === 'portfolio' && portfolioSection}

@@ -76,16 +76,16 @@ const mineScoreOf = (
   const goodwill = goodwillRatio ?? 0
   const pledge = pledgeRatio ?? 0
 
-  // 当前公开口径只对“超过硬过滤线”的风险做降分；
-  // 未触发高风险拦截时记 100，后续再继续补全更细的扫雷因子。
+  // 公开口径下，先用商誉与质押做连续风险分：
+  // - 商誉 5% 以内不扣分，之后逐步降分；
+  // - 质押 10% 以内不扣分，之后逐步降分；
+  // - 超过硬过滤线（20%）后继续快速降分。
+  //
+  // 这样既能保留高风险拦截，又不会让绝大部分样本都堆在 100 分。
   const goodwillPenalty =
-    goodwill <= MAX_GOODWILL_RATIO
-      ? 0
-      : Math.min(70, ((goodwill - MAX_GOODWILL_RATIO) / 30) * 70)
+    goodwill <= 5 ? 0 : Math.min(70, (goodwill - 5) * 4)
   const pledgePenalty =
-    pledge <= MAX_PLEDGE_RATIO
-      ? 0
-      : Math.min(30, ((pledge - MAX_PLEDGE_RATIO) / 20) * 30)
+    pledge <= 10 ? 0 : Math.min(30, (pledge - 10) * 2)
 
   return Math.max(0, Math.round(100 - goodwillPenalty - pledgePenalty))
 }
