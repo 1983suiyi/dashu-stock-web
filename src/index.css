@@ -438,6 +438,83 @@ button:disabled {
   font-size: 0.86rem;
 }
 
+.risk-cell {
+  white-space: nowrap;
+}
+
+.risk-popover {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.risk-trigger {
+  padding: 0.34rem 0.72rem;
+  border-radius: 999px;
+  border: 1px solid rgba(143, 170, 220, 0.24);
+  background: rgba(255, 255, 255, 0.05);
+  color: #dce6f6;
+  font-size: 0.82rem;
+  line-height: 1;
+  box-shadow: none;
+}
+
+.risk-trigger:hover,
+.risk-popover:focus-within .risk-trigger {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(143, 170, 220, 0.36);
+  transform: none;
+  box-shadow: none;
+}
+
+.risk-bubble {
+  position: absolute;
+  right: calc(100% + 12px);
+  top: 50%;
+  z-index: 20;
+  display: none;
+  width: 280px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(143, 170, 220, 0.2);
+  background: rgba(6, 16, 34, 0.96);
+  color: #eff5ff;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.34);
+  transform: translateY(-50%);
+  text-align: left;
+  white-space: normal;
+}
+
+.risk-bubble::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: 10px;
+  height: 10px;
+  border-top: 1px solid rgba(143, 170, 220, 0.2);
+  border-right: 1px solid rgba(143, 170, 220, 0.2);
+  background: rgba(6, 16, 34, 0.96);
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.risk-popover:hover .risk-bubble,
+.risk-popover:focus-within .risk-bubble {
+  display: block;
+}
+
+.risk-list {
+  display: grid;
+  gap: 8px;
+}
+
+.risk-item,
+.risk-empty {
+  color: #dce6f6;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
 .diagnostic-card,
 .archive-card {
   padding: 18px;

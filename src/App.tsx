@@ -964,7 +964,13 @@ function App() {
             </tr>
           </thead>
           <tbody>
-            {visibleStocks.slice(0, 300).map((stock) => (
+            {visibleStocks.slice(0, 300).map((stock) => {
+              const hintItems = [
+                ...stock.notes,
+                ...stock.missingFields.map((field) => `待补：${field}`),
+              ]
+
+              return (
               <tr key={stock.code}>
                 <td>
                   <div>{stock.name}</div>
@@ -997,17 +1003,33 @@ function App() {
                     {stock.eligible ? '通过' : '未通过'}
                   </span>
                 </td>
-                <td>
-                  {stock.notes.join(' / ') || '无明显提示'}
-                  {stock.missingFields.length > 0 && (
-                    <em className="missing">
-                      {' '}
-                      待补：{stock.missingFields.join('、')}
-                    </em>
-                  )}
+                <td className="risk-cell">
+                  <div className="risk-popover">
+                    <button
+                      type="button"
+                      className="risk-trigger"
+                      aria-label={`查看 ${stock.name} 的风险提示`}
+                    >
+                      查看
+                    </button>
+                    <div className="risk-bubble">
+                      {hintItems.length > 0 ? (
+                        <div className="risk-list">
+                          {hintItems.map((item) => (
+                            <div key={item} className="risk-item">
+                              {item}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="risk-empty">无明显提示</div>
+                      )}
+                    </div>
+                  </div>
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
