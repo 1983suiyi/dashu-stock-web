@@ -103,13 +103,27 @@ type HoldingImport = {
 type HoldingDetail = PortfolioHolding & {
   sector: string
   price: number | null
+  pb: number | null
+  pe: number | null
   costPrice: number | null
   sourceLabel: string
   weightKnown: boolean
 }
 
+type CapitalEventType = '入金' | '出金' | '分红' | '取现'
+
+type CapitalEvent = {
+  id: string
+  date: string
+  type: CapitalEventType
+  amount: number
+  note: string
+}
+
 const ARCHIVE_STORAGE_KEY = 'dashu-workspace-archives'
 const HOLDING_STORAGE_KEY = 'dashu-user-holdings'
+const CASH_BALANCE_STORAGE_KEY = 'dashu-cash-balance'
+const CAPITAL_EVENTS_STORAGE_KEY = 'dashu-capital-events'
 
 const navItems: Array<{ key: WorkspaceView; label: string }> = [
   { key: 'overview', label: '市场概况' },
@@ -344,6 +358,19 @@ const yi = (value: number | null, digits = 0) =>
   value === null ? '—' : (value / 1e8).toFixed(digits)
 
 const normalize = (value: string) => value.trim().toLowerCase()
+const todayText = () => new Date().toISOString().slice(0, 10)
+const currency = (value: number | null, digits = 0) =>
+  value === null ? '—' : value.toFixed(digits)
+const signedCapitalAmount = (event: Pick<CapitalEvent, 'type' | 'amount'>) =>
+  event.type === '入金' || event.type === '分红' ? event.amount : -event.amount
+const weightedAverage = (
+  items: Array<{ weight: number; value: number | null }>,
+) => {
+  const valid = items.filter((item) => item.weight > 0 && item.value !== null)
+  const totalWeight = valid.reduce((sum, item) => sum + item.weight, 0)
+  if (totalWeight <= 0) return null
+  return valid.reduce((sum, item) => sum + item.weight * (item.value ?? 0), 0) / totalWeight
+}
 
 function App() {
   const [stocks, setStocks] = useState<StockRecord[]>(demoStocks)
@@ -364,6 +391,13 @@ function App() {
   const [holdingCodeInput, setHoldingCodeInput] = useState('')
   const [holdingWeightInput, setHoldingWeightInput] = useState('')
   const [holdingCostInput, setHoldingCostInput] = useState('')
+  const [cashBalance, setCashBalance] = useState(0)
+  const [cashBalanceInput, setCashBalanceInput] = useState('0')
+  const [capitalEvents, setCapitalEvents] = useState<CapitalEvent[]>([])
+  const [capitalDateInput, setCapitalDateInput] = useState(todayText())
+  const [capitalTypeInput, setCapitalTypeInput] = useState<CapitalEventType>('入金')
+  const [capitalAmountInput, setCapitalAmountInput] = useState('')
+  const [capitalNoteInput, setCapitalNoteInput] = useState('')
 
   useEffect(() => {
     try {
@@ -395,6 +429,48 @@ function App() {
     }
   }, [holdingImports])
 
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CASH_BALANCE_STORAGE_KEY)
+      if (!raw) return
+      const parsed = Number(raw)
+      if (Number.isFinite(parsed)) {
+        setCashBalance(parsed)
+        setCashBalanceInput(parsed.toFixed(2))
+      }
+    } catch {
+      setCashBalance(0)
+      setCashBalanceInput('0')
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CAPITAL_EVENTS_STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as CapitalEvent[]
+      setCapitalEvents(Array.isArray(parsed) ? parsed : [])
+    } catch {
+      setCapitalEvents([])
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CASH_BALANCE_STORAGE_KEY, String(cashBalance))
+    } catch {
+      // localStorage 超限时保留内存态，不打断主流程
+    }
+  }, [cashBalance])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CAPITAL_EVENTS_STORAGE_KEY, JSON.stringify(capitalEvents))
+    } catch {
+      // localStorage 超限时保留内存态，不打断主流程
+    }
+  }, [capitalEvents])
+
   const scoredStocks = useMemo(
     () => scoreStocks(stocks, config),
     [stocks, config],
@@ -424,6 +500,8 @@ function App() {
           targetWeight: item.weight ?? 0,
           weightKnown: item.weight !== null,
           price: stockMatched?.price ?? null,
+          pb: stockMatched?.pb ?? null,
+          pe: stockMatched?.pe ?? null,
           costPrice: item.costPrice,
           reason: item.source === 'manual' ? '手动添加' : 'CSV 导入',
           sourceLabel: item.source === 'manual' ? '手动添加' : '同花顺/CSV 导入',
@@ -435,6 +513,59 @@ function App() {
     () => new Map(holdingDetails.map((item) => [item.code, item.targetWeight])),
     [holdingDetails],
   )
+  const knownHoldingWeight = useMemo(
+    () =>
+      holdingDetails.reduce(
+        (sum, item) => sum + (item.weightKnown ? Math.max(0, item.targetWeight) : 0),
+        0,
+      ),
+    [holdingDetails],
+  )
+  const derivedTotalAsset = useMemo(() => {
+    if (knownHoldingWeight < 0) return null
+    if (knownHoldingWeight >= 1) return null
+    return cashBalance / (1 - knownHoldingWeight)
+  }, [cashBalance, knownHoldingWeight])
+  const estimatedHoldingMarketValue = useMemo(() => {
+    if (derivedTotalAsset === null) return null
+    return derivedTotalAsset * knownHoldingWeight
+  }, [derivedTotalAsset, knownHoldingWeight])
+  const capitalNetFlow = useMemo(
+    () => capitalEvents.reduce((sum, item) => sum + signedCapitalAmount(item), 0),
+    [capitalEvents],
+  )
+  const holdingWeightedPb = useMemo(
+    () =>
+      weightedAverage(
+        holdingDetails.map((item) => ({
+          weight: item.weightKnown ? item.targetWeight : 0,
+          value: item.pb,
+        })),
+      ),
+    [holdingDetails],
+  )
+  const holdingWeightedPe = useMemo(
+    () =>
+      weightedAverage(
+        holdingDetails.map((item) => ({
+          weight: item.weightKnown ? item.targetWeight : 0,
+          value: item.pe,
+        })),
+      ),
+    [holdingDetails],
+  )
+  const estimatedFloatingProfit = useMemo(() => {
+    if (derivedTotalAsset === null) return null
+    const profit = holdingDetails.reduce((sum, item) => {
+      if (!item.weightKnown || item.price === null || item.costPrice === null || item.price <= 0) {
+        return sum
+      }
+      const currentValue = derivedTotalAsset * item.targetWeight
+      const estimatedCostValue = currentValue * (item.costPrice / item.price)
+      return sum + (currentValue - estimatedCostValue)
+    }, 0)
+    return Number.isFinite(profit) ? profit : null
+  }, [derivedTotalAsset, holdingDetails])
   const marketSummary = useMemo(() => summarizeMarket(market), [market])
   const exposure = useMemo(() => portfolioExposure(portfolio), [portfolio])
   const industrySummaries = useMemo(
@@ -708,6 +839,60 @@ function App() {
   const handleClearHoldings = () => {
     setHoldingImports([])
     setMessage('已清空当前持仓列表。')
+  }
+
+  const handleSaveCashBalance = () => {
+    const parsed = parseLooseNumber(cashBalanceInput)
+    if (parsed === null || parsed < 0) {
+      setWarning('请填写有效的现金余额。')
+      return
+    }
+    setCashBalance(parsed)
+    setCashBalanceInput(parsed.toFixed(2))
+    setWarning('')
+    setMessage(`已更新现金余额：${parsed.toFixed(2)}。`)
+  }
+
+  const handleAddCapitalEvent = () => {
+    const amount = parseLooseNumber(capitalAmountInput)
+    if (!capitalDateInput) {
+      setWarning('请选择资金变动日期。')
+      return
+    }
+    if (amount === null || amount <= 0) {
+      setWarning('请填写大于 0 的资金变动金额。')
+      return
+    }
+
+    const event: CapitalEvent = {
+      id: String(Date.now()),
+      date: capitalDateInput,
+      type: capitalTypeInput,
+      amount,
+      note: capitalNoteInput.trim(),
+    }
+
+    setCapitalEvents((current) => [event, ...current])
+    setCashBalance((current) => Number((current + signedCapitalAmount(event)).toFixed(2)))
+    setCapitalAmountInput('')
+    setCapitalNoteInput('')
+    setWarning('')
+    setMessage(
+      `已记录资金变动：${event.type} ${amount.toFixed(2)}，现金余额同步更新。`,
+    )
+  }
+
+  const handleDeleteCapitalEvent = (id: string) => {
+    setCapitalEvents((current) => {
+      const target = current.find((item) => item.id === id)
+      if (target) {
+        setCashBalance((cash) =>
+          Number((cash - signedCapitalAmount(target)).toFixed(2)),
+        )
+      }
+      return current.filter((item) => item.id !== id)
+    })
+    setMessage('已移除一条资金变动记录，并回滚现金余额。')
   }
 
   const handleRestoreDemo = () => {
@@ -1388,6 +1573,35 @@ function App() {
           持仓由你手动维护，或者通过同花顺/券商导出的 CSV 导入；系统只负责基于当前股票池补齐评分与诊断信息。
         </p>
       </div>
+      <div className="meta-grid">
+        <div>
+          <span>组合 PB</span>
+          <strong>{show(holdingWeightedPb)}</strong>
+        </div>
+        <div>
+          <span>组合 PEttm</span>
+          <strong>{show(holdingWeightedPe)}</strong>
+        </div>
+        <div>
+          <span>当前仓位</span>
+          <strong>{(knownHoldingWeight * 100).toFixed(1)}%</strong>
+        </div>
+        <div>
+          <span>推算持仓市值</span>
+          <strong>{currency(estimatedHoldingMarketValue, 0)}</strong>
+        </div>
+        <div>
+          <span>现金</span>
+          <strong>{currency(cashBalance, 0)}</strong>
+        </div>
+        <div>
+          <span>推算总资产</span>
+          <strong>{currency(derivedTotalAsset, 0)}</strong>
+        </div>
+      </div>
+      <p className="helper-text">
+        资金概览按“现金余额 + 你录入的持仓占比”推算。若持仓占比合计达到 100% 或仍有缺失，占位类金额会显示为 `—`。
+      </p>
       <div className="action-row">
         <label className="inline-search">
           <span>股票代码</span>
@@ -1493,6 +1707,143 @@ function App() {
       <div className="section-title">
         <h2>持仓汇总</h2>
         <p>按你的实际持仓聚合行业，方便看仓位分散度和行业权重占用情况。</p>
+      </div>
+      <div className="two-columns">
+        <div>
+          <div className="section-title">
+            <h2>账户资金</h2>
+            <p>维护当前现金余额，并自动汇总净流入、总资产、当前仓位与浮盈亏。</p>
+          </div>
+          <div className="action-row">
+            <label className="inline-search">
+              <span>当前现金余额</span>
+              <input
+                value={cashBalanceInput}
+                onChange={(event) => setCashBalanceInput(event.target.value)}
+                placeholder="例如 47068"
+              />
+            </label>
+            <button type="button" onClick={handleSaveCashBalance}>
+              保存现金
+            </button>
+          </div>
+          <div className="meta-grid">
+            <div>
+              <span>累计净流入</span>
+              <strong>{currency(capitalNetFlow, 0)}</strong>
+            </div>
+            <div>
+              <span>现金余额</span>
+              <strong>{currency(cashBalance, 0)}</strong>
+            </div>
+            <div>
+              <span>推算持仓市值</span>
+              <strong>{currency(estimatedHoldingMarketValue, 0)}</strong>
+            </div>
+            <div>
+              <span>推算总资产</span>
+              <strong>{currency(derivedTotalAsset, 0)}</strong>
+            </div>
+            <div>
+              <span>当前仓位</span>
+              <strong>{(knownHoldingWeight * 100).toFixed(1)}%</strong>
+            </div>
+            <div>
+              <span>推算浮盈亏</span>
+              <strong>{currency(estimatedFloatingProfit, 0)}</strong>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div className="section-title">
+            <h2>资金变动</h2>
+            <p>记录入金、出金、分红和取现，系统会同步调整现金余额并保留流水。</p>
+          </div>
+          <div className="control-grid capital-grid">
+            <label>
+              日期
+              <input
+                type="date"
+                value={capitalDateInput}
+                onChange={(event) => setCapitalDateInput(event.target.value)}
+              />
+            </label>
+            <label>
+              类型
+              <select
+                value={capitalTypeInput}
+                onChange={(event) =>
+                  setCapitalTypeInput(event.target.value as CapitalEventType)
+                }
+              >
+                <option value="入金">入金</option>
+                <option value="出金">出金</option>
+                <option value="分红">分红</option>
+                <option value="取现">取现</option>
+              </select>
+            </label>
+            <label>
+              金额
+              <input
+                value={capitalAmountInput}
+                onChange={(event) => setCapitalAmountInput(event.target.value)}
+                placeholder="例如 5000"
+              />
+            </label>
+            <label>
+              备注
+              <input
+                value={capitalNoteInput}
+                onChange={(event) => setCapitalNoteInput(event.target.value)}
+                placeholder="例如 银证转入 / 红利到账"
+              />
+            </label>
+          </div>
+          <div className="action-row">
+            <button type="button" onClick={handleAddCapitalEvent}>
+              记录资金变动
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>类型</th>
+              <th>金额</th>
+              <th>净影响</th>
+              <th>备注</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {capitalEvents.map((item) => (
+              <tr key={item.id}>
+                <td>{item.date}</td>
+                <td>{item.type}</td>
+                <td>{currency(item.amount, 2)}</td>
+                <td>{signedCapitalAmount(item).toFixed(2)}</td>
+                <td>{item.note || '—'}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="risk-trigger"
+                    onClick={() => handleDeleteCapitalEvent(item.id)}
+                  >
+                    删除
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {capitalEvents.length === 0 && (
+              <tr>
+                <td colSpan={6}>暂无资金流水，先记录一笔入金或分红即可开始。</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
       <div className="table-wrap">
         <table>
