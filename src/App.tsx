@@ -96,12 +96,14 @@ type HoldingImport = {
   code: string
   name: string
   weight: number | null
+  costPrice: number | null
   source: 'manual' | 'csv'
 }
 
 type HoldingDetail = PortfolioHolding & {
   sector: string
   price: number | null
+  costPrice: number | null
   sourceLabel: string
   weightKnown: boolean
 }
@@ -251,6 +253,14 @@ const parseHoldingsCsv = (text: string): HoldingImport[] => {
     '权重',
     '目标权重',
   ])
+  const costPriceIndex = headerIndexOf(headers, [
+    'costprice',
+    '成本价',
+    '成本',
+    '买入价',
+    '买入均价',
+    '成交均价',
+  ])
   const marketValueIndex = headerIndexOf(headers, [
     '市值',
     '持仓市值',
@@ -266,6 +276,8 @@ const parseHoldingsCsv = (text: string): HoldingImport[] => {
       code: normalizeCode(values[codeIndex] ?? ''),
       name: nameIndex >= 0 ? (values[nameIndex] ?? '').trim() : '',
       weight: weightIndex >= 0 ? toRatio(values[weightIndex] ?? '') : null,
+      costPrice:
+        costPriceIndex >= 0 ? parseLooseNumber(values[costPriceIndex] ?? '') : null,
       marketValue:
         marketValueIndex >= 0 ? parseLooseNumber(values[marketValueIndex] ?? '') : null,
     }))
@@ -292,6 +304,7 @@ const parseHoldingsCsv = (text: string): HoldingImport[] => {
       grouped.set(item.code, {
         ...existing,
         name: existing.name || item.name,
+        costPrice: existing.costPrice ?? item.costPrice,
         weight:
           existing.weight !== null && derivedWeight !== null
             ? existing.weight + derivedWeight
@@ -304,6 +317,7 @@ const parseHoldingsCsv = (text: string): HoldingImport[] => {
       code: item.code,
       name: item.name,
       weight: derivedWeight,
+      costPrice: item.costPrice,
       source: 'csv',
     })
   }
@@ -349,6 +363,7 @@ function App() {
   const [holdingImports, setHoldingImports] = useState<HoldingImport[]>([])
   const [holdingCodeInput, setHoldingCodeInput] = useState('')
   const [holdingWeightInput, setHoldingWeightInput] = useState('')
+  const [holdingCostInput, setHoldingCostInput] = useState('')
 
   useEffect(() => {
     try {
@@ -409,6 +424,7 @@ function App() {
           targetWeight: item.weight ?? 0,
           weightKnown: item.weight !== null,
           price: stockMatched?.price ?? null,
+          costPrice: item.costPrice,
           reason: item.source === 'manual' ? '手动添加' : 'CSV 导入',
           sourceLabel: item.source === 'manual' ? '手动添加' : '同花顺/CSV 导入',
         }
@@ -610,6 +626,9 @@ function App() {
   const handleAddHolding = () => {
     const code = normalizeCode(holdingCodeInput)
     const weight = toRatio(holdingWeightInput)
+    const costPrice = holdingCostInput.trim()
+      ? parseLooseNumber(holdingCostInput)
+      : null
 
     if (!code) {
       setWarning('请先输入 6 位股票代码。')
@@ -617,6 +636,10 @@ function App() {
     }
     if (weight === null) {
       setWarning('请填写有效的持仓占比，例如 3 或 3%。')
+      return
+    }
+    if (holdingCostInput.trim() && costPrice === null) {
+      setWarning('请填写有效的成本价，例如 12.36。')
       return
     }
 
@@ -632,14 +655,18 @@ function App() {
           code,
           name: matched?.name ?? code,
           weight,
+          costPrice,
           source: 'manual',
         },
       ]
     })
     setHoldingCodeInput('')
     setHoldingWeightInput('')
+    setHoldingCostInput('')
     setWarning('')
-    setMessage(`已添加持仓：${matched?.name ?? code}，持仓占比 ${(weight * 100).toFixed(2)}%。`)
+    setMessage(
+      `已添加持仓：${matched?.name ?? code}，持仓占比 ${(weight * 100).toFixed(2)}%，成本价 ${costPrice === null ? '未填写' : costPrice.toFixed(2)}。`,
+    )
   }
 
   const handleDeleteHolding = (code: string) => {
@@ -774,6 +801,7 @@ function App() {
         item.score > 0 ? fixed(item.score, 1) : '',
         fixed(item.winProbability, 1),
         item.weightKnown ? (item.targetWeight * 100).toFixed(2) : '',
+        fixed(item.costPrice),
         fixed(item.price),
         item.sourceLabel,
       ]
@@ -789,6 +817,7 @@ function App() {
           '三好学生评分',
           '绝对胜算概率(%)',
           '持仓占比(%)',
+          '成本价',
           '现价',
           '来源',
         ],
@@ -1345,6 +1374,14 @@ function App() {
             placeholder="例如 3 或 3%"
           />
         </label>
+        <label className="inline-search">
+          <span>成本价</span>
+          <input
+            value={holdingCostInput}
+            onChange={(event) => setHoldingCostInput(event.target.value)}
+            placeholder="例如 12.36"
+          />
+        </label>
         <button type="button" onClick={handleAddHolding}>
           添加持仓
         </button>
@@ -1362,7 +1399,7 @@ function App() {
         </button>
       </div>
       <p className="helper-text">
-        支持直接导入同花顺/通用 CSV。优先识别“持仓占比/仓位/权重”，若缺少占比但存在“市值/持仓市值”，则会按市值自动折算持仓占比。
+        支持直接导入同花顺/通用 CSV。优先识别“持仓占比/仓位/权重”和“成本价/买入价/成交均价”；若缺少占比但存在“市值/持仓市值”，则会按市值自动折算持仓占比。
       </p>
       <div className="table-wrap">
         <table>
@@ -1375,6 +1412,7 @@ function App() {
               <th>三好学生评分</th>
               <th>绝对胜算概率</th>
               <th>持仓占比</th>
+              <th>成本价</th>
               <th>现价</th>
               <th>来源</th>
               <th>操作</th>
@@ -1391,6 +1429,7 @@ function App() {
                   <td>{item.score > 0 ? item.score.toFixed(1) : '—'}</td>
                   <td>{percentView(item.winProbability, 1)}</td>
                   <td>{item.weightKnown ? `${(item.targetWeight * 100).toFixed(2)}%` : '—'}</td>
+                  <td>{show(item.costPrice)}</td>
                   <td>{show(item.price)}</td>
                   <td>{item.sourceLabel}</td>
                   <td>
@@ -1407,7 +1446,7 @@ function App() {
             })}
             {holdingDetails.length === 0 && (
               <tr>
-                <td colSpan={10}>
+                <td colSpan={11}>
                   暂无持仓数据。请手动添加，或导入同花顺导出的持仓 CSV。
                 </td>
               </tr>
