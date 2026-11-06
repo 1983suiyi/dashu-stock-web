@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { defaultConfig, defaultMarketSnapshot, demoStocks } from './data/stocks'
 import { downloadCsv, toCsv } from './lib/csv'
-import { fetchRealMarketData } from './lib/eastmoney'
+import { fetchRealMarketData, fetchStockByCode } from './lib/eastmoney'
 import { normalizeIndustry } from './lib/industry'
 import { applyKline, fetchKlines } from './lib/kline'
 import {
@@ -623,12 +623,13 @@ function App() {
     }
   }
 
-  const handleAddHolding = () => {
+  const handleAddHolding = async () => {
     const code = normalizeCode(holdingCodeInput)
     const weight = toRatio(holdingWeightInput)
     const costPrice = holdingCostInput.trim()
       ? parseLooseNumber(holdingCostInput)
       : null
+    let addWarning = ''
 
     if (!code) {
       setWarning('请先输入 6 位股票代码。')
@@ -643,9 +644,39 @@ function App() {
       return
     }
 
-    const matched =
+    let matched =
       scoredStocks.find((stock) => stock.code === code) ??
       stocks.find((stock) => stock.code === code)
+
+    if (!matched) {
+      setLoading(true)
+      setWarning('')
+      try {
+        const fetched = await fetchStockByCode(
+          code,
+          (text) => setProgress(text),
+        )
+        if (fetched) {
+          matched = fetched
+          setProgress(`正在补齐 ${code} 的一年/三年低价…`)
+          const { data } = await fetchKlines([code], config.klineDays)
+          matched = applyKline([fetched], data)[0]
+          const mergedStocks = [...stocks.filter((item) => item.code !== code), matched]
+          setStocks(mergedStocks)
+          setMarket(deriveMarketSnapshot(mergedStocks))
+        } else {
+          addWarning = `未找到股票 ${code} 的公开市场资料，将先按手动持仓保存。`
+        }
+      } catch (error) {
+        addWarning =
+          `未能自动补齐 ${code} 的股票资料：${
+            error instanceof Error ? error.message : String(error)
+          }。已先保存为手动持仓。`
+      } finally {
+        setLoading(false)
+        setProgress('')
+      }
+    }
 
     setHoldingImports((current) => {
       const next = current.filter((item) => item.code !== code)
@@ -663,7 +694,7 @@ function App() {
     setHoldingCodeInput('')
     setHoldingWeightInput('')
     setHoldingCostInput('')
-    setWarning('')
+    setWarning(addWarning)
     setMessage(
       `已添加持仓：${matched?.name ?? code}，持仓占比 ${(weight * 100).toFixed(2)}%，成本价 ${costPrice === null ? '未填写' : costPrice.toFixed(2)}。`,
     )

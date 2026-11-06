@@ -36,6 +36,9 @@ type QueryParams = {
   filter?: string
 }
 
+const appendCodeFilter = (filter: string | undefined, code?: string) =>
+  code ? `${filter ?? ''}(SECURITY_CODE='${code}')` : filter
+
 const queryPage = async (
   params: QueryParams,
 ): Promise<{ rows: RawRow[]; pages: number }> => {
@@ -174,7 +177,7 @@ const isAShare = (secucode: string) =>
  * 因此未实施、仅为预案的方案不会计入，与「已到手的分红」一致。
  * 报表字段 `PRETAX_BONUS_RMB` 的含义是「每 10 股派息(税前)元」，故需除以 10。
  */
-const fetchDividendPerShare = async (): Promise<Map<string, number>> => {
+const fetchDividendPerShare = async (code?: string): Promise<Map<string, number>> => {
   const since = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
     .toISOString()
     .slice(0, 10)
@@ -183,7 +186,7 @@ const fetchDividendPerShare = async (): Promise<Map<string, number>> => {
     reportName: 'RPT_SHAREBONUS_DET',
     sortColumns: 'SECURITY_CODE',
     sortTypes: 1,
-    filter: `(EX_DIVIDEND_DATE>='${since}')`,
+    filter: appendCodeFilter(`(EX_DIVIDEND_DATE>='${since}')`, code),
   })
 
   const perShare = new Map<string, number>()
@@ -210,7 +213,7 @@ const dividendYieldOf = (
 }
 
 /** 最新报告期商誉占净资产比例(%)。页面对应数据中心「商誉」明细表。 */
-const fetchGoodwillRatios = async (): Promise<Map<string, number>> => {
+const fetchGoodwillRatios = async (code?: string): Promise<Map<string, number>> => {
   const reportDate = await latestReportDate(
     'RPT_GOODWILL_STOCKDETAILS',
     'REPORT_DATE',
@@ -219,7 +222,7 @@ const fetchGoodwillRatios = async (): Promise<Map<string, number>> => {
     reportName: 'RPT_GOODWILL_STOCKDETAILS',
     sortColumns: 'SECURITY_CODE',
     sortTypes: 1,
-    filter: `(REPORT_DATE='${reportDate}')`,
+    filter: appendCodeFilter(`(REPORT_DATE='${reportDate}')`, code),
   })
 
   const ratios = new Map<string, number>()
@@ -233,11 +236,12 @@ const fetchGoodwillRatios = async (): Promise<Map<string, number>> => {
 }
 
 /** 最新交易日股权质押比例(%)。页面对应数据中心「股权质押」最新统计表。 */
-const fetchPledgeRatios = async (): Promise<Map<string, number>> => {
+const fetchPledgeRatios = async (code?: string): Promise<Map<string, number>> => {
   const rows = await queryAll({
     reportName: 'RPT_CSDC_LIST_NEWEST',
     sortColumns: 'SECURITY_CODE',
     sortTypes: 1,
+    filter: code ? `(SECURITY_CODE='${code}')` : undefined,
   })
 
   const ratios = new Map<string, number>()
@@ -255,6 +259,50 @@ export type FetchProgress = (message: string) => void
 export type RealMarketData = {
   stocks: StockRecord[]
   meta: DataSourceMeta
+}
+
+const toStockRecord = (
+  row: RawRow,
+  extras: {
+    debtRatio: number | null
+    roe: number | null
+    dividendPerShare?: number
+    goodwillRatio?: number
+    pledgeRatio?: number
+  },
+): StockRecord | null => {
+  const secucode = toText(row.SECUCODE)
+  const code = toText(row.SECURITY_CODE)
+  if (!code) return null
+  if (secucode && !isAShare(secucode)) return null
+
+  const name = toText(row.SECURITY_NAME_ABBR)
+  if (!name || name.includes('退')) return null
+
+  const sourceIndustry = toText(row.BOARD_NAME) || '未分类'
+  const { sector, industry } = normalizeIndustry(sourceIndustry)
+  const price = toNumber(row.CLOSE_PRICE)
+
+  return {
+    code,
+    name,
+    sector,
+    industry,
+    sourceIndustry,
+    price,
+    pb: toNumber(row.PB_MRQ),
+    pe: toNumber(row.PE_TTM),
+    ps: toNumber(row.PS_TTM),
+    roe: extras.roe,
+    debtRatio: extras.debtRatio,
+    marketCap: toNumber(row.TOTAL_MARKET_CAP),
+    dividendYield: dividendYieldOf(extras.dividendPerShare, price),
+    goodwillRatio: extras.goodwillRatio ?? 0,
+    pledgeRatio: extras.pledgeRatio ?? 0,
+    lowPrice1y: null,
+    lowPrice3y: null,
+    isST: /ST/i.test(name),
+  }
 }
 
 /**
@@ -326,39 +374,15 @@ export const fetchRealMarketData = async (
     if (!code || seen.has(code)) continue
     if (secucode && !isAShare(secucode)) continue
 
-    const name = toText(row.SECURITY_NAME_ABBR)
-    if (!name) continue
-    // 退市整理期股票估值极低（实测 PB 可低至 0.03），会污染低估值选股，直接剔除
-    if (name.includes('退')) continue
-
-    const sourceIndustry = toText(row.BOARD_NAME) || '未分类'
-    const { sector, industry } = normalizeIndustry(sourceIndustry)
-    const price = toNumber(row.CLOSE_PRICE)
-
     seen.add(code)
-    stocks.push({
-      code,
-      name,
-      sector,
-      industry,
-      sourceIndustry,
-      price,
-      pb: toNumber(row.PB_MRQ),
-      pe: toNumber(row.PE_TTM),
-      ps: toNumber(row.PS_TTM),
+    const stock = toStockRecord(row, {
       roe: roeByCode.get(code) ?? null,
       debtRatio: debtByCode.get(code) ?? null,
-      marketCap: toNumber(row.TOTAL_MARKET_CAP),
-      // 股息率由「近 12 个月已实施分红 / 现价」换算，见 fetchDividendPerShare
-      dividendYield: dividendYieldOf(dividendPerShare.get(code), price),
-      // 商誉 / 质押来自东财公开风险报表，缺失按 0 处理，避免空值绕过风险过滤
+      dividendPerShare: dividendPerShare.get(code),
       goodwillRatio: goodwillRatios.get(code) ?? 0,
       pledgeRatio: pledgeRatios.get(code) ?? 0,
-      // 由后端 K 线代理补齐
-      lowPrice1y: null,
-        lowPrice3y: null,
-      isST: /ST/i.test(name),
     })
+    if (stock) stocks.push(stock)
   }
 
   if (stocks.length === 0) {
@@ -376,4 +400,53 @@ export const fetchRealMarketData = async (
       fetchedAt: new Date().toLocaleString('zh-CN'),
     },
   }
+}
+
+export const fetchStockByCode = async (
+  code: string,
+  onProgress?: FetchProgress,
+): Promise<StockRecord | null> => {
+  onProgress?.(`正在补齐 ${code} 的最新估值数据…`)
+  const tradeDate = await latestTradeDate()
+  const valuationRows = await queryAll({
+    reportName: 'RPT_VALUEANALYSIS_DET',
+    sortColumns: 'SECURITY_CODE',
+    sortTypes: 1,
+    filter: `(TRADE_DATE='${tradeDate}')(SECURITY_CODE='${code}')`,
+  })
+  const valuationRow = valuationRows[0]
+  if (!valuationRow) return null
+
+  onProgress?.(`正在补齐 ${code} 的财务与风险数据…`)
+  const [balanceDate, profitDate] = await Promise.all([
+    latestReportDate('RPT_DMSK_FN_BALANCE', 'REPORT_DATE'),
+    latestReportDate('RPT_LICO_FN_CPD', 'REPORTDATE'),
+  ])
+
+  const [balanceRows, profitRows, dividendPerShare, goodwillRatios, pledgeRatios] =
+    await Promise.all([
+      queryAll({
+        reportName: 'RPT_DMSK_FN_BALANCE',
+        sortColumns: 'SECURITY_CODE',
+        sortTypes: 1,
+        filter: `(REPORT_DATE='${balanceDate}')(SECURITY_CODE='${code}')`,
+      }),
+      queryAll({
+        reportName: 'RPT_LICO_FN_CPD',
+        sortColumns: 'SECURITY_CODE',
+        sortTypes: 1,
+        filter: `(REPORTDATE='${profitDate}')(SECURITY_CODE='${code}')`,
+      }),
+      fetchDividendPerShare(code),
+      fetchGoodwillRatios(code),
+      fetchPledgeRatios(code),
+    ])
+
+  return toStockRecord(valuationRow, {
+    debtRatio: toNumber(balanceRows[0]?.DEBT_ASSET_RATIO),
+    roe: toNumber(profitRows[0]?.WEIGHTAVG_ROE),
+    dividendPerShare: dividendPerShare.get(code),
+    goodwillRatio: goodwillRatios.get(code) ?? 0,
+    pledgeRatio: pledgeRatios.get(code) ?? 0,
+  })
 }
