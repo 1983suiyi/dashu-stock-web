@@ -54,9 +54,14 @@ export const fetchKlines = async (
   return { data, failed }
 }
 
-/** 把 K 线结果回填到股票记录 */
+/** 把 K 线结果回填到股票记录，同时用腾讯快照最新价刷新现价 */
 export const applyKline = <
-  T extends { code: string; lowPrice1y: number | null; lowPrice3y: number | null },
+  T extends {
+    code: string
+    price: number | null
+    lowPrice1y: number | null
+    lowPrice3y: number | null
+  },
 >(
   stocks: T[],
   kline: Record<string, KlineResult>,
@@ -67,6 +72,11 @@ export const applyKline = <
     if (!entry) return stock
     return {
       ...stock,
+      // 腾讯快照会在交易时段返回更新中的现价，这里优先覆盖东财主表的交易日快照。
+      price:
+        entry.lastClose !== null && entry.lastClose > 0
+          ? entry.lastClose
+          : stock.price,
       lowPrice1y: entry.low1y ?? stock.lowPrice1y,
       lowPrice3y: entry.low3y ?? stock.lowPrice3y,
     }

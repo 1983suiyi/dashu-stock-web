@@ -7,6 +7,7 @@ export type StockRecord = {
   industry: string
   /** 原始数据源行业名，便于对表与回溯 */
   sourceIndustry?: string
+  /** 现价：东财交易日快照打底，补 K 线时优先用腾讯最新价覆盖 */
   price: number | null
   pb: number | null
   pe: number | null

@@ -307,8 +307,8 @@ function App() {
       setMarket(deriveMarketSnapshot(enriched))
       setDataMeta({ ...meta, klineCount: count })
       setMessage(
-        `已接入真实数据：${meta.total} 只 A 股，交易日 ${meta.tradeDate}，` +
-          `其中 ${count} 只补齐了一年/三年低价。`,
+        `已接入最新数据：${meta.total} 只 A 股，东财交易日 ${meta.tradeDate}，` +
+          `其中 ${count} 只补齐了一年/三年低价，并已用腾讯快照刷新现价。`,
       )
       if (failed.length > 0) {
         setWarning(`有 ${failed.length} 只候选未能取到 K 线，其涨幅得分暂缺。`)
@@ -335,7 +335,7 @@ function App() {
       setDataMeta((current) =>
         current ? { ...current, klineCount: count } : current,
       )
-      setMessage(`已为 ${count} 只候选补齐一年/三年低价。`)
+      setMessage(`已为 ${count} 只候选补齐一年/三年低价，并刷新最新现价。`)
       if (failed.length > 0) {
         setWarning(`有 ${failed.length} 只候选未能取到 K 线。`)
       }
@@ -595,7 +595,7 @@ function App() {
             分，满分 {MAX_SCORE} 分，绝对胜算概率 = 总分 / 3。
           </p>
           <div className="hero-tags">
-            <span>全市场真实数据</span>
+            <span>全市场最新数据</span>
             <span>三好学生评分</span>
             <span>细分行业</span>
             <span>归档与 AI 摘要</span>
@@ -633,14 +633,14 @@ function App() {
         <div className="section-title">
           <h2>数据与导出</h2>
           <p>
-            行情与财务来自东方财富公开接口（浏览器直连）；一年/三年低价由本地
-            <code> /api/kline </code>代理补齐，用于计算涨1、涨3与涨幅得分。
+            财务与估值主表来自东方财富公开接口（浏览器直连）；现价、一年低点与三年低点由本地
+            <code> /api/kline </code> 代理补齐，其中现价优先使用腾讯最新快照，用于计算涨1、涨3与涨幅得分。
           </p>
         </div>
 
         <div className="action-row">
           <button type="button" onClick={handleFetchAll} disabled={loading}>
-            {loading ? '处理中…' : '拉取真实数据并评分'}
+            {loading ? '处理中…' : '拉取最新数据并评分'}
           </button>
           <button type="button" onClick={handleFillKline} disabled={loading}>
             仅补齐 K 线
@@ -704,7 +704,7 @@ function App() {
         )}
 
         <p className="helper-text">
-          说明：涨幅得分依赖「一年内最低价」，截图中的涨3依赖「三年内最低价」。为控制请求量，只对
+          说明：财务与估值字段采用最近公开快照；现价优先使用腾讯最新快照。涨幅得分依赖「一年内最低价」，截图中的涨3依赖「三年内最低价」。为控制请求量，只对
           <strong>可能达到门槛</strong>的候选（PB+PE 得分 &gt; 门槛 − 100）补 K
           线，该剪枝不丢结果。当前仍有 {pendingKline} 只未补齐。
         </p>
@@ -1079,7 +1079,7 @@ function App() {
             {portfolio.length === 0 && (
               <tr>
                 <td colSpan={8}>
-                  暂无通过筛选的股票。请先拉取真实数据并补齐 K 线，或下调评分门槛。
+                  暂无通过筛选的股票。请先拉取最新数据并补齐 K 线，或下调评分门槛。
                 </td>
               </tr>
             )}
@@ -1220,7 +1220,7 @@ function App() {
             </div>
           </article>
         ))}
-        {snapshots.length === 0 && <p className="helper-text">暂无归档，先拉真实数据后点击“归档当前结果”。</p>}
+        {snapshots.length === 0 && <p className="helper-text">暂无归档，先拉最新数据后点击“归档当前结果”。</p>}
       </div>
     </section>
   )
