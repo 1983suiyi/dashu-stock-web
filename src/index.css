@@ -98,6 +98,42 @@ th {
   white-space: nowrap;
 }
 
+.sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sort-button:hover {
+  color: #cfe0ff;
+}
+
+.sort-button.active {
+  color: #cfe0ff;
+}
+
+.sort-arrows {
+  display: inline-flex;
+  flex-direction: column;
+  line-height: 1;
+  font-size: 0.5rem;
+}
+
+.arrow {
+  color: rgba(141, 176, 255, 0.35);
+  transition: color 0.15s ease;
+}
+
+.arrow.on {
+  color: #7fe3ff;
+}
+
 #root {
   width: 100%;
 }

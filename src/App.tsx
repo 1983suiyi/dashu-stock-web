@@ -25,6 +25,7 @@ import type {
   DataSourceMeta,
   MarketSnapshot,
   PortfolioHolding,
+  ScoredStock,
   StockRecord,
   StrategyConfig,
 } from './types'
@@ -119,6 +120,30 @@ type CapitalEvent = {
   amount: number
   note: string
 }
+
+/** 大数评分表可排序的列 */
+type ScoreSortKey =
+  | 'name'
+  | 'industry'
+  | 'holding'
+  | 'score'
+  | 'pb'
+  | 'pe'
+  | 'price'
+  | 'gain1y'
+  | 'gain3y'
+  | 'mine'
+  | 'marketCap'
+  | 'dividendYield'
+  | 'pledgeRatio'
+  | 'goodwillRatio'
+  | 'debtRatio'
+  | 'eligible'
+
+type SortDirection = 'asc' | 'desc'
+
+/** 文本类列默认升序，数值类列默认降序 */
+const TEXT_SORT_KEYS: ScoreSortKey[] = ['name', 'industry']
 
 const ARCHIVE_STORAGE_KEY = 'dashu-workspace-archives'
 const HOLDING_STORAGE_KEY = 'dashu-user-holdings'
@@ -383,6 +408,8 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
   const [onlyEligible, setOnlyEligible] = useState(false)
+  const [scoreSortKey, setScoreSortKey] = useState<ScoreSortKey | null>(null)
+  const [scoreSortDirection, setScoreSortDirection] = useState<SortDirection>('desc')
   const [activeView, setActiveView] = useState<WorkspaceView>('overview')
   const [sidebarVisible, setSidebarVisible] = useState(true)
   const [stockQuery, setStockQuery] = useState('000589')
@@ -636,6 +663,108 @@ function App() {
     [scoredStocks],
   )
   const visibleStocks = onlyEligible ? eligibleStocks : scoredStocks
+
+  /** 按当前列与方向排序；未选择列时保持原始顺序，空值始终排在最后 */
+  const sortedVisibleStocks = useMemo(() => {
+    if (scoreSortKey === null) return visibleStocks
+    const direction = scoreSortDirection === 'asc' ? 1 : -1
+    const valueOf = (stock: ScoredStock): number | string | null => {
+      switch (scoreSortKey) {
+        case 'name':
+          return stock.name
+        case 'industry':
+          return `${stock.sector} ${stock.industry}`
+        case 'holding':
+          return holdingWeightByCode.get(stock.code) ?? null
+        case 'score':
+          return stock.totalScore
+        case 'pb':
+          return stock.pb
+        case 'pe':
+          return stock.pe
+        case 'price':
+          return stock.price
+        case 'gain1y':
+          return stock.gain1y
+        case 'gain3y':
+          return stock.gain3y
+        case 'mine':
+          return stock.mineScore
+        case 'marketCap':
+          return stock.marketCap
+        case 'dividendYield':
+          return stock.dividendYield
+        case 'pledgeRatio':
+          return stock.pledgeRatio
+        case 'goodwillRatio':
+          return stock.goodwillRatio
+        case 'debtRatio':
+          return stock.debtRatio
+        case 'eligible':
+          return stock.eligible ? 1 : 0
+        default:
+          return null
+      }
+    }
+    const isBlank = (value: number | string | null) =>
+      value === null ||
+      value === undefined ||
+      value === '' ||
+      (typeof value === 'number' && !Number.isFinite(value))
+
+    return visibleStocks
+      .map((stock, index) => ({ stock, index, value: valueOf(stock) }))
+      .sort((a, b) => {
+        const blankA = isBlank(a.value)
+        const blankB = isBlank(b.value)
+        if (blankA && blankB) return a.index - b.index
+        if (blankA) return 1
+        if (blankB) return -1
+        if (typeof a.value === 'string' && typeof b.value === 'string') {
+          return a.value.localeCompare(b.value, 'zh-Hans-CN') * direction
+        }
+        return ((a.value as number) - (b.value as number)) * direction
+      })
+      .map((item) => item.stock)
+  }, [visibleStocks, scoreSortKey, scoreSortDirection, holdingWeightByCode])
+
+  const toggleScoreSort = (key: ScoreSortKey) => {
+    if (scoreSortKey === key) {
+      setScoreSortDirection(scoreSortDirection === 'asc' ? 'desc' : 'asc')
+      return
+    }
+    setScoreSortKey(key)
+    setScoreSortDirection(TEXT_SORT_KEYS.includes(key) ? 'asc' : 'desc')
+  }
+
+  const renderScoreSortHeader = (key: ScoreSortKey, label: string) => {
+    const isActive = scoreSortKey === key
+    return (
+      <th
+        key={key}
+        aria-sort={
+          isActive ? (scoreSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'
+        }
+      >
+        <button
+          type="button"
+          className={isActive ? 'sort-button active' : 'sort-button'}
+          onClick={() => toggleScoreSort(key)}
+        >
+          <span>{label}</span>
+          <span className="sort-arrows" aria-hidden="true">
+            <span className={isActive && scoreSortDirection === 'asc' ? 'arrow on' : 'arrow'}>
+              ▲
+            </span>
+            <span className={isActive && scoreSortDirection === 'desc' ? 'arrow on' : 'arrow'}>
+              ▼
+            </span>
+          </span>
+        </button>
+      </th>
+    )
+  }
+
   const searchedStocks = useMemo(() => {
     const keyword = normalize(stockQuery)
     if (!keyword) return []
@@ -1531,27 +1660,27 @@ function App() {
         <table>
           <thead>
             <tr>
-              <th>名称/代码</th>
-              <th>行业/细分</th>
-              <th>持仓</th>
-              <th>大数分</th>
-              <th>PB</th>
-              <th>PE</th>
-              <th>现价</th>
-              <th>涨1</th>
-              <th>涨3</th>
-              <th>扫雷宝</th>
-              <th>总市值</th>
-              <th>股息率</th>
-              <th>质押率</th>
-              <th>商誉</th>
-              <th>资产负债 / 宽容上限</th>
-              <th>状态</th>
+              {renderScoreSortHeader('name', '名称/代码')}
+              {renderScoreSortHeader('industry', '行业/细分')}
+              {renderScoreSortHeader('holding', '持仓')}
+              {renderScoreSortHeader('score', '大数分')}
+              {renderScoreSortHeader('pb', 'PB')}
+              {renderScoreSortHeader('pe', 'PE')}
+              {renderScoreSortHeader('price', '现价')}
+              {renderScoreSortHeader('gain1y', '涨1')}
+              {renderScoreSortHeader('gain3y', '涨3')}
+              {renderScoreSortHeader('mine', '扫雷宝')}
+              {renderScoreSortHeader('marketCap', '总市值')}
+              {renderScoreSortHeader('dividendYield', '股息率')}
+              {renderScoreSortHeader('pledgeRatio', '质押率')}
+              {renderScoreSortHeader('goodwillRatio', '商誉')}
+              {renderScoreSortHeader('debtRatio', '资产负债 / 宽容上限')}
+              {renderScoreSortHeader('eligible', '状态')}
               <th>风险提示</th>
             </tr>
           </thead>
           <tbody>
-            {visibleStocks.slice(0, 300).map((stock) => {
+            {sortedVisibleStocks.slice(0, 300).map((stock) => {
               const hintItems = [
                 ...stock.notes,
                 ...stock.missingFields.map((field) => `待补：${field}`),
