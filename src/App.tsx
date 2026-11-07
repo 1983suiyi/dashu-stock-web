@@ -123,6 +123,7 @@ type CapitalEvent = {
 const ARCHIVE_STORAGE_KEY = 'dashu-workspace-archives'
 const HOLDING_STORAGE_KEY = 'dashu-user-holdings'
 const CASH_BALANCE_STORAGE_KEY = 'dashu-cash-balance'
+const TOTAL_ASSETS_STORAGE_KEY = 'dashu-total-assets'
 const CAPITAL_EVENTS_STORAGE_KEY = 'dashu-capital-events'
 
 const navItems: Array<{ key: WorkspaceView; label: string }> = [
@@ -393,6 +394,8 @@ function App() {
   const [holdingCostInput, setHoldingCostInput] = useState('')
   const [cashBalance, setCashBalance] = useState(0)
   const [cashBalanceInput, setCashBalanceInput] = useState('0')
+  const [totalAssets, setTotalAssets] = useState<number | null>(null)
+  const [totalAssetsInput, setTotalAssetsInput] = useState('')
   const [capitalEvents, setCapitalEvents] = useState<CapitalEvent[]>([])
   const [capitalDateInput, setCapitalDateInput] = useState(todayText())
   const [capitalTypeInput, setCapitalTypeInput] = useState<CapitalEventType>('入金')
@@ -446,6 +449,21 @@ function App() {
 
   useEffect(() => {
     try {
+      const raw = localStorage.getItem(TOTAL_ASSETS_STORAGE_KEY)
+      if (!raw) return
+      const parsed = Number(raw)
+      if (Number.isFinite(parsed) && parsed > 0) {
+        setTotalAssets(parsed)
+        setTotalAssetsInput(parsed.toFixed(2))
+      }
+    } catch {
+      setTotalAssets(null)
+      setTotalAssetsInput('')
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
       const raw = localStorage.getItem(CAPITAL_EVENTS_STORAGE_KEY)
       if (!raw) return
       const parsed = JSON.parse(raw) as CapitalEvent[]
@@ -462,6 +480,17 @@ function App() {
       // localStorage 超限时保留内存态，不打断主流程
     }
   }, [cashBalance])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        TOTAL_ASSETS_STORAGE_KEY,
+        totalAssets === null ? '' : String(totalAssets),
+      )
+    } catch {
+      // localStorage 超限时保留内存态，不打断主流程
+    }
+  }, [totalAssets])
 
   useEffect(() => {
     try {
@@ -526,10 +555,18 @@ function App() {
     if (knownHoldingWeight >= 1) return null
     return cashBalance / (1 - knownHoldingWeight)
   }, [cashBalance, knownHoldingWeight])
+  /** 手动填写的总资产优先；留空时回退到「按持仓占比推算」 */
+  const effectiveTotalAsset = totalAssets ?? derivedTotalAsset
   const estimatedHoldingMarketValue = useMemo(() => {
-    if (derivedTotalAsset === null) return null
-    return derivedTotalAsset * knownHoldingWeight
-  }, [derivedTotalAsset, knownHoldingWeight])
+    if (effectiveTotalAsset === null) return null
+    if (totalAssets !== null) return Math.max(0, effectiveTotalAsset - cashBalance)
+    return effectiveTotalAsset * knownHoldingWeight
+  }, [effectiveTotalAsset, totalAssets, cashBalance, knownHoldingWeight])
+  /** 手动填写总资产时按金额算仓位，否则沿用持仓占比合计 */
+  const currentPositionRatio = useMemo(() => {
+    if (totalAssets === null || totalAssets <= 0) return knownHoldingWeight
+    return Math.min(1, Math.max(0, (estimatedHoldingMarketValue ?? 0) / totalAssets))
+  }, [totalAssets, estimatedHoldingMarketValue, knownHoldingWeight])
   const capitalNetFlow = useMemo(
     () => capitalEvents.reduce((sum, item) => sum + signedCapitalAmount(item), 0),
     [capitalEvents],
@@ -555,17 +592,21 @@ function App() {
     [holdingDetails],
   )
   const estimatedFloatingProfit = useMemo(() => {
-    if (derivedTotalAsset === null) return null
+    if (estimatedHoldingMarketValue === null || estimatedHoldingMarketValue <= 0) {
+      return null
+    }
+    if (knownHoldingWeight <= 0) return null
     const profit = holdingDetails.reduce((sum, item) => {
       if (!item.weightKnown || item.price === null || item.costPrice === null || item.price <= 0) {
         return sum
       }
-      const currentValue = derivedTotalAsset * item.targetWeight
+      const share = item.targetWeight / knownHoldingWeight
+      const currentValue = estimatedHoldingMarketValue * share
       const estimatedCostValue = currentValue * (item.costPrice / item.price)
       return sum + (currentValue - estimatedCostValue)
     }, 0)
     return Number.isFinite(profit) ? profit : null
-  }, [derivedTotalAsset, holdingDetails])
+  }, [estimatedHoldingMarketValue, knownHoldingWeight, holdingDetails])
   const marketSummary = useMemo(() => summarizeMarket(market), [market])
   const exposure = useMemo(() => portfolioExposure(portfolio), [portfolio])
   const industrySummaries = useMemo(
@@ -841,16 +882,37 @@ function App() {
     setMessage('已清空当前持仓列表。')
   }
 
-  const handleSaveCashBalance = () => {
-    const parsed = parseLooseNumber(cashBalanceInput)
-    if (parsed === null || parsed < 0) {
+  const handleSaveAccountAmounts = () => {
+    const parsedCash = parseLooseNumber(cashBalanceInput)
+    if (parsedCash === null || parsedCash < 0) {
       setWarning('请填写有效的现金余额。')
       return
     }
-    setCashBalance(parsed)
-    setCashBalanceInput(parsed.toFixed(2))
+
+    const rawTotal = totalAssetsInput.trim()
+    let parsedTotal: number | null = null
+    if (rawTotal) {
+      parsedTotal = parseLooseNumber(rawTotal)
+      if (parsedTotal === null || parsedTotal < 0) {
+        setWarning('请填写有效的总资产，或留空改用持仓占比推算。')
+        return
+      }
+      if (parsedTotal < parsedCash) {
+        setWarning('总资产不能小于现金余额。')
+        return
+      }
+    }
+
+    setCashBalance(parsedCash)
+    setCashBalanceInput(parsedCash.toFixed(2))
+    setTotalAssets(parsedTotal)
+    setTotalAssetsInput(parsedTotal === null ? '' : parsedTotal.toFixed(2))
     setWarning('')
-    setMessage(`已更新现金余额：${parsed.toFixed(2)}。`)
+    setMessage(
+      parsedTotal === null
+        ? `已更新现金余额：${parsedCash.toFixed(2)}，总资产改回按持仓占比推算。`
+        : `已更新账户资金：现金 ${parsedCash.toFixed(2)}，总资产 ${parsedTotal.toFixed(2)}。`,
+    )
   }
 
   const handleAddCapitalEvent = () => {
@@ -1584,10 +1646,10 @@ function App() {
         </div>
         <div>
           <span>当前仓位</span>
-          <strong>{(knownHoldingWeight * 100).toFixed(1)}%</strong>
+          <strong>{(currentPositionRatio * 100).toFixed(1)}%</strong>
         </div>
         <div>
-          <span>推算持仓市值</span>
+          <span>持仓市值</span>
           <strong>{currency(estimatedHoldingMarketValue, 0)}</strong>
         </div>
         <div>
@@ -1595,12 +1657,12 @@ function App() {
           <strong>{currency(cashBalance, 0)}</strong>
         </div>
         <div>
-          <span>推算总资产</span>
-          <strong>{currency(derivedTotalAsset, 0)}</strong>
+          <span>总资产</span>
+          <strong>{currency(effectiveTotalAsset, 0)}</strong>
         </div>
       </div>
       <p className="helper-text">
-        资金概览按“现金余额 + 你录入的持仓占比”推算。若持仓占比合计达到 100% 或仍有缺失，占位类金额会显示为 `—`。
+        现金与总资产在「持仓汇总 → 账户资金」里手动填写；总资产留空时按“现金 ÷ (1 − 持仓占比合计)”推算。
       </p>
       <div className="action-row">
         <label className="inline-search">
@@ -1712,19 +1774,27 @@ function App() {
         <div>
           <div className="section-title">
             <h2>账户资金</h2>
-            <p>维护当前现金余额，并自动汇总净流入、总资产、当前仓位与浮盈亏。</p>
+            <p>手动维护现金余额与总资产，并自动汇总净流入、持仓市值、当前仓位与浮盈亏。</p>
           </div>
           <div className="action-row">
             <label className="inline-search">
-              <span>当前现金余额</span>
+              <span>当前现金</span>
               <input
                 value={cashBalanceInput}
                 onChange={(event) => setCashBalanceInput(event.target.value)}
                 placeholder="例如 47068"
               />
             </label>
-            <button type="button" onClick={handleSaveCashBalance}>
-              保存现金
+            <label className="inline-search">
+              <span>总资产</span>
+              <input
+                value={totalAssetsInput}
+                onChange={(event) => setTotalAssetsInput(event.target.value)}
+                placeholder="留空则按持仓占比推算"
+              />
+            </label>
+            <button type="button" onClick={handleSaveAccountAmounts}>
+              保存
             </button>
           </div>
           <div className="meta-grid">
@@ -1737,16 +1807,16 @@ function App() {
               <strong>{currency(cashBalance, 0)}</strong>
             </div>
             <div>
-              <span>推算持仓市值</span>
+              <span>持仓市值</span>
               <strong>{currency(estimatedHoldingMarketValue, 0)}</strong>
             </div>
             <div>
-              <span>推算总资产</span>
-              <strong>{currency(derivedTotalAsset, 0)}</strong>
+              <span>总资产</span>
+              <strong>{currency(effectiveTotalAsset, 0)}</strong>
             </div>
             <div>
               <span>当前仓位</span>
-              <strong>{(knownHoldingWeight * 100).toFixed(1)}%</strong>
+              <strong>{(currentPositionRatio * 100).toFixed(1)}%</strong>
             </div>
             <div>
               <span>推算浮盈亏</span>
