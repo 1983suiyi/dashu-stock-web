@@ -24,6 +24,9 @@ export const MAX_SCORE = 300
 /** 公开口径的高风险兜底：先用最明显的两类财务/股权风险做硬过滤。 */
 export const MAX_GOODWILL_RATIO = 20
 export const MAX_PLEDGE_RATIO = 20
+/** 个股 PB 相对「行业 PB 底」的偏离分档(%)：≤10% 视为贴近底部，≥20% 视为明显偏离 */
+export const PB_FLOOR_NEAR_PCT = 10
+export const PB_FLOOR_FAR_PCT = 20
 
 /** 原始实现的线性映射：v>=hi 记 0，v<=lo 记 1（即满分） */
 const bta = (lo: number, hi: number, value: number) => {
@@ -117,6 +120,22 @@ export const industryDebtMedians = (stocks: StockRecord[]) => {
   return result
 }
 
+/**
+ * 各行业「PB 底」：该细分行业内最低的正 PB。
+ * 与「细分行业」表的 PB底 口径保持一致，用于判断个股是否贴近行业底部。
+ */
+export const industryPbFloors = (stocks: StockRecord[]) => {
+  const grouped = new Map<string, number>()
+  for (const stock of stocks) {
+    if (stock.pb === null || stock.pb <= 0) continue
+    const current = grouped.get(stock.industry)
+    if (current === undefined || stock.pb < current) {
+      grouped.set(stock.industry, stock.pb)
+    }
+  }
+  return grouped
+}
+
 export const scoreStocks = (
   stocks: StockRecord[],
   config: StrategyConfig,
@@ -124,6 +143,7 @@ export const scoreStocks = (
   const [pbLo, pbHi] = pbBand(config.discount)
   const [peLo, peHi] = peBand(config.discount)
   const debtMedians = industryDebtMedians(stocks)
+  const pbFloors = industryPbFloors(stocks)
 
   return stocks
     .map<ScoredStock>((stock) => {
@@ -152,6 +172,11 @@ export const scoreStocks = (
       const winProbability = complete ? totalScore / 3 : null
 
       const industryDebtMedian = debtMedians.get(stock.industry) ?? null
+      const industryPbFloor = pbFloors.get(stock.industry) ?? null
+      const pbVsFloorPct =
+        stock.pb !== null && stock.pb > 0 && industryPbFloor !== null && industryPbFloor > 0
+          ? (stock.pb / industryPbFloor - 1) * 100
+          : null
       const industryDebtMedianLimit =
         industryDebtMedian === null
           ? null
@@ -181,6 +206,11 @@ export const scoreStocks = (
         notes.push('股息率低于阈值')
       }
       if (stock.isST) notes.push('ST 风险')
+      if (pbVsFloorPct !== null) {
+        notes.push(
+          `距行业 PB 底 ${pbVsFloorPct.toFixed(1)}%（PB 底 ${industryPbFloor?.toFixed(2)}）`,
+        )
+      }
 
       const eligible =
         !stock.isST &&
@@ -206,6 +236,8 @@ export const scoreStocks = (
         peBand: [peLo, peHi],
         industryDebtMedian,
         industryDebtMedianLimit,
+        industryPbFloor,
+        pbVsFloorPct,
         debtAboveIndustryMedian,
         eligible,
         notes,

@@ -12,6 +12,8 @@ import {
 } from './lib/analytics'
 import {
   MAX_SCORE,
+  PB_FLOOR_FAR_PCT,
+  PB_FLOOR_NEAR_PCT,
   deriveMarketSnapshot,
   pbBand,
   peBand,
@@ -382,6 +384,24 @@ const gainView = (value: number | null, digits = 0) =>
 
 const yi = (value: number | null, digits = 0) =>
   value === null ? '—' : (value / 1e8).toFixed(digits)
+
+/**
+ * 个股 PB 相对「行业 PB 底」的偏离分档：
+ * 贴近底部（≤10%）为绿色，偏离 10%~20% 为黄色，≥20% 为红色。
+ */
+const pbFloorClass = (value: number | null) => {
+  if (value === null) return 'pb-level'
+  if (value >= PB_FLOOR_FAR_PCT) return 'pb-level pb-level-high'
+  if (value > PB_FLOOR_NEAR_PCT) return 'pb-level pb-level-mid'
+  return 'pb-level pb-level-low'
+}
+
+const pbFloorTitle = (stock: ScoredStock) => {
+  if (stock.pbVsFloorPct === null || stock.industryPbFloor === null) {
+    return '行业 PB 底缺失，暂无法比较'
+  }
+  return `距行业 PB 底 +${stock.pbVsFloorPct.toFixed(1)}%（${stock.industry} PB 底 ${stock.industryPbFloor.toFixed(2)}）`
+}
 
 const normalize = (value: string) => value.trim().toLowerCase()
 const todayText = () => new Date().toISOString().slice(0, 10)
@@ -1603,6 +1623,12 @@ function App() {
                 </span>
                 <span>涨1 {gainView(selectedStock.gain1y, 0)}</span>
                 <span>涨3 {gainView(selectedStock.gain3y, 0)}</span>
+                <span className={pbFloorClass(selectedStock.pbVsFloorPct)}>
+                  距 PB 底{' '}
+                  {selectedStock.pbVsFloorPct === null
+                    ? '—'
+                    : `+${selectedStock.pbVsFloorPct.toFixed(1)}%`}
+                </span>
                 <span>一年内低点 {show(selectedStock.lowPrice1y)}</span>
                 <span>三年内低点 {show(selectedStock.lowPrice3y)}</span>
               </div>
@@ -1705,7 +1731,9 @@ function App() {
                   <div>{show(stock.winProbability, 1)}</div>
                   <div className="helper-text">{stock.totalScore.toFixed(0)}</div>
                 </td>
-                <td>{show(stock.pb)}</td>
+                <td className={pbFloorClass(stock.pbVsFloorPct)} title={pbFloorTitle(stock)}>
+                  {show(stock.pb)}
+                </td>
                 <td>{show(stock.pe)}</td>
                 <td>{show(stock.price)}</td>
                 <td>{gainView(stock.gain1y, 0)}</td>
@@ -1753,6 +1781,12 @@ function App() {
           </tbody>
         </table>
       </div>
+      <p className="helper-text pb-legend">
+        <span className="pb-level pb-level-low">PB 绿</span> = 距行业 PB 底 ≤ {PB_FLOOR_NEAR_PCT}%（相对便宜）；
+        <span className="pb-level pb-level-mid">PB 黄</span> = 高于底部 {PB_FLOOR_NEAR_PCT}%~{PB_FLOOR_FAR_PCT}%；
+        <span className="pb-level pb-level-high">PB 红</span> = 高于底部 ≥ {PB_FLOOR_FAR_PCT}%。
+        PB 底取该细分行业内最低的正 PB，悬停单个 PB 可看具体偏离值。
+      </p>
     </section>
   )
 

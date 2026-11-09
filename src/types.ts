@@ -69,6 +69,10 @@ export type ScoredStock = StockRecord & {
   industryDebtMedian: number | null
   /** 行业中位数叠加宽容幅度后的判定上限 */
   industryDebtMedianLimit: number | null
+  /** 同细分行业内的最低正 PB（PB 底），口径与「细分行业」表一致 */
+  industryPbFloor: number | null
+  /** 个股 PB 相对行业 PB 底的偏离幅度(%)，越接近 0 越贴近行业底部 */
+  pbVsFloorPct: number | null
   debtAboveIndustryMedian: boolean | null
   eligible: boolean
   notes: string[]

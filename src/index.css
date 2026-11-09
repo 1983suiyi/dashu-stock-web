@@ -414,6 +414,42 @@ th {
   background: rgba(255, 126, 90, 0.14);
 }
 
+/* 个股 PB 相对行业 PB 底的偏离分档：绿=贴近底部，黄=偏离，红=明显偏离 */
+.pb-level {
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-level-low {
+  color: #9ef0bf;
+  background: rgba(49, 189, 108, 0.14);
+  font-weight: 600;
+}
+
+.pb-level-mid {
+  color: #f5d98b;
+  background: rgba(214, 173, 60, 0.16);
+  font-weight: 600;
+}
+
+.pb-level-high {
+  color: #ff9c8f;
+  background: rgba(255, 96, 72, 0.18);
+  font-weight: 600;
+}
+
+.pb-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.pb-legend .pb-level {
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+
 .large-number {
   margin: 10px 0 8px;
 }
