@@ -8,11 +8,13 @@
  *
  * 数据源：
  * - 腾讯 qt.gtimg.cn 行情快照：直接返回 52 周高低点，用于一年内低点；
- * - 东方财富 push2his 历史 K 线：逐只回看近 3 年，用于三年内低点。
+ * - 腾讯 proxy.finance.qq.com 前复权日线：逐只回看近 3 年，用于三年内低点。
  * 该模块同时被 Vite 开发中间件和独立生产服务器复用，保证两种环境行为一致。
  */
 const QUOTE_BASE = 'https://qt.gtimg.cn/q='
-const HISTORY_BASE = 'https://push2his.eastmoney.com/api/qt/stock/kline/get'
+// 三年低点历史 K 线：东财 push2his 在部分网络环境下被阻断，
+// 改用腾讯前复权日线接口 proxy.finance.qq.com，实测稳定可用。
+const HISTORY_BASE = 'https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get'
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
 
@@ -112,41 +114,45 @@ const fetchBatch = async (symbols) => {
   }
 }
 
-const symbolToSecid = (symbol) => {
-  if (/^sh\d{6}$/.test(symbol)) return `1.${symbol.slice(2)}`
-  if (/^(sz|bj)\d{6}$/.test(symbol)) return `0.${symbol.slice(2)}`
-  return null
-}
-
 const beginDateOf = (days) => {
   const d = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
   const year = d.getFullYear()
   const month = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
-  return `${year}${month}${day}`
+  return `${year}-${month}-${day}`
 }
 
+const todayStr = () => {
+  const d = new Date()
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+/**
+ * 从腾讯前复权日线接口取近 N 天最低价。
+ * 接口返回 JSONP：kline_dayqfq={"data":{"<symbol>":{"qfqday":[[date,open,close,high,low,...],...]}}}
+ * 相比东财 push2his，腾讯接口在更多网络环境下可达，且返回前复权数据可直接比较。
+ */
 const fetchHistoryLow = async (symbol, days) => {
-  const secid = symbolToSecid(symbol)
-  if (!secid) return null
   for (let attempt = 0; attempt <= HISTORY_RETRY; attempt += 1) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
     try {
       const url = new URL(HISTORY_BASE)
-      url.searchParams.set('secid', secid)
-      url.searchParams.set('fields1', 'f1,f2,f3,f4,f5,f6')
-      url.searchParams.set('fields2', 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61')
-      url.searchParams.set('klt', '101')
-      url.searchParams.set('fqt', '1')
-      url.searchParams.set('beg', beginDateOf(days))
-      url.searchParams.set('end', '20500101')
+      url.searchParams.set('_var', 'kline_dayqfq')
+      // 腾讯接口的 COUNT 参数即返回的最大 K 线条数，按交易日近似取 days
+      url.searchParams.set(
+        'param',
+        `${symbol},day,${beginDateOf(days)},${todayStr()},${Math.min(1500, Math.ceil(days * 1.5))},qfq`,
+      )
 
       const response = await fetch(url.toString(), {
         headers: {
           'User-Agent': USER_AGENT,
-          Referer: 'https://quote.eastmoney.com/',
+          Referer: 'https://gu.qq.com/',
         },
         signal: controller.signal,
       })
@@ -155,17 +161,23 @@ const fetchHistoryLow = async (symbol, days) => {
         continue
       }
 
-      const payload = await response.json()
-      const klines = payload?.data?.klines
+      // 腾讯返回 JSONP：kline_dayqfq={...}，去掉前缀后解析
+      const raw = await response.text()
+      const jsonStart = raw.indexOf('{')
+      if (jsonStart < 0) {
+        if (attempt < HISTORY_RETRY) await sleep(250 * (attempt + 1))
+        continue
+      }
+      const payload = JSON.parse(raw.slice(jsonStart))
+      const klines = payload?.data?.[symbol]?.qfqday
       if (!Array.isArray(klines) || klines.length === 0) return null
 
       let low3y = null
       let from = null
       let to = null
-      for (const line of klines) {
-        const parts = String(line).split(',')
-        const day = parts[0] || null
-        const low = toNumber(parts[4])
+      for (const row of klines) {
+        const day = row[0] || null
+        const low = toNumber(row[4])
         if (day && from === null) from = day
         if (day) to = day
         if (low === null || low <= 0) continue
