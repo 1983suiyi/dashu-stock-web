@@ -757,8 +757,39 @@ function App() {
     setScoreSortDirection(TEXT_SORT_KEYS.includes(key) ? 'asc' : 'desc')
   }
 
+  /**
+   * 大数评分表各列说明，鼠标悬停表头时展示。
+   * 口径全部来自公开数据源与策略代码，不含模拟器私有数据。
+   */
+  const COLUMN_TOOLTIPS: Partial<Record<ScoreSortKey, string>> = {
+    name: '股票名称与 6 位代码。点击列头可按名称排序。',
+    industry: '一级行业 / 细分行业，由东方财富 BOARD_NAME 归一化得到。',
+    holding: '你的实际持仓占比(%)，来自手动添加或 CSV 导入，非系统生成。',
+    score:
+      '三好学生评分（满分 300）= PB 得分 + PE 得分 + 涨幅得分。> 200 分视为入池门槛。',
+    pb:
+      '市净率。颜色按距行业 PB 底的偏离着色：绿=贴近底部，黄=已离开，红=明显偏离。悬停可看具体偏离值。',
+    pe: '市盈率(TTM)。亏损或负值记为无效，不参与估值评分。',
+    price: '当前现价。优先使用腾讯快照实时价，缺省时回退东方财富交易日快照。',
+    gain1y:
+      '一年内涨幅 = (现价 − 一年内最低价) ÷ 一年内最低价。一年内最低价由腾讯 52 周快照提供。',
+    gain3y:
+      '三年内涨幅 = (现价 − 三年内最低价) ÷ 三年内最低价。三年内最低价由腾讯前复权日线逐只补齐。',
+    mine:
+      '扫雷宝评分（满分 100）。基于商誉占净资产与股权质押比例连续扣分；任一 ≥ 20% 触发硬过滤。',
+    marketCap: '总市值（亿元），来自东方财富。',
+    dividendYield:
+      '股息率(%) = 近 12 个月已实施税前每 10 股派息 ÷ 10 ÷ 现价 × 100。未实施方案与未来日期不计入。',
+    pledgeRatio: '股权质押比例(%)，最新交易日数据，来自东方财富 RPT_CSDC_LIST_NEWEST。',
+    goodwillRatio: '商誉占净资产比例(%)，最新报告期，来自东方财富 RPT_GOODWILL_STOCKDETAILS。',
+    debtRatio:
+      '资产负债率(%) / 宽容上限(%)。上限 = 行业资产负债率中位数 × (1 + 宽容幅度，默认 15%)。超过上限不予入池。',
+    eligible: '入池状态：通过 = 满足全部筛选条件；未通过 = 至少一项不满足。',
+  }
+
   const renderScoreSortHeader = (key: ScoreSortKey, label: string) => {
     const isActive = scoreSortKey === key
+    const tooltip = COLUMN_TOOLTIPS[key]
     return (
       <th
         key={key}
@@ -770,6 +801,7 @@ function App() {
           type="button"
           className={isActive ? 'sort-button active' : 'sort-button'}
           onClick={() => toggleScoreSort(key)}
+          title={tooltip}
         >
           <span>{label}</span>
           <span className="sort-arrows" aria-hidden="true">
@@ -780,6 +812,7 @@ function App() {
               ▼
             </span>
           </span>
+          {tooltip && <span className="sort-tooltip" role="tooltip">{tooltip}</span>}
         </button>
       </th>
     )
