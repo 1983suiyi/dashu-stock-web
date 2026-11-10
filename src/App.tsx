@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { defaultConfig, defaultMarketSnapshot, demoStocks } from './data/stocks'
 import { downloadCsv, toCsv } from './lib/csv'
 import { fetchRealMarketData, fetchStockByCode } from './lib/eastmoney'
@@ -152,6 +152,8 @@ const HOLDING_STORAGE_KEY = 'dashu-user-holdings'
 const CASH_BALANCE_STORAGE_KEY = 'dashu-cash-balance'
 const TOTAL_ASSETS_STORAGE_KEY = 'dashu-total-assets'
 const CAPITAL_EVENTS_STORAGE_KEY = 'dashu-capital-events'
+/** 全市场数据缓存：同一天内刷新页面直接复用，避免重复拉取 */
+const MARKET_CACHE_KEY = 'dashu-market-cache'
 
 const navItems: Array<{ key: WorkspaceView; label: string }> = [
   { key: 'overview', label: '市场概况' },
@@ -405,6 +407,39 @@ const pbFloorTitle = (stock: ScoredStock) => {
 
 const normalize = (value: string) => value.trim().toLowerCase()
 const todayText = () => new Date().toISOString().slice(0, 10)
+
+/** 全市场数据缓存结构 */
+type MarketCache = {
+  date: string
+  fetchedAt: string
+  stocks: StockRecord[]
+  meta: DataSourceMeta
+  market: MarketSnapshot
+}
+
+/** 从 localStorage 加载当天缓存，若非当天或数据损坏则返回 null */
+const loadMarketCache = (): MarketCache | null => {
+  try {
+    const raw = localStorage.getItem(MARKET_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as MarketCache
+    if (parsed.date !== todayText()) return null
+    if (!Array.isArray(parsed.stocks) || parsed.stocks.length === 0) return null
+    if (!parsed.meta || !parsed.market) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+/** 将拉取结果写入 localStorage；超出容量时静默失败，内存态仍可用 */
+const saveMarketCache = (cache: MarketCache) => {
+  try {
+    localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(cache))
+  } catch {
+    // localStorage 超限（全市场数据可能较大），忽略，下次刷新会重新拉取
+  }
+}
 const currency = (value: number | null, digits = 0) =>
   value === null ? '—' : value.toFixed(digits)
 const signedCapitalAmount = (event: Pick<CapitalEvent, 'type' | 'amount'>) =>
@@ -448,6 +483,9 @@ function App() {
   const [capitalTypeInput, setCapitalTypeInput] = useState<CapitalEventType>('入金')
   const [capitalAmountInput, setCapitalAmountInput] = useState('')
   const [capitalNoteInput, setCapitalNoteInput] = useState('')
+
+  // 用于在挂载 effect 中调用最新的 handleFetchAll，避免依赖闭包过期
+  const fetchAllRef = useRef<() => Promise<void>>(async () => {})
 
   useEffect(() => {
     try {
@@ -880,8 +918,9 @@ function App() {
     try {
       const { stocks: universe, meta } = await fetchRealMarketData(setProgress)
       const { stocks: enriched, count, failed } = await runKlineStep(universe)
+      const derivedMarket = deriveMarketSnapshot(enriched)
       setStocks(enriched)
-      setMarket(deriveMarketSnapshot(enriched))
+      setMarket(derivedMarket)
       setDataMeta({ ...meta, klineCount: count })
       setMessage(
         `已接入最新数据：${meta.total} 只 A 股，东财交易日 ${meta.tradeDate}，` +
@@ -890,6 +929,14 @@ function App() {
       if (failed.length > 0) {
         setWarning(`有 ${failed.length} 只候选未能取到 K 线，其涨幅得分暂缺。`)
       }
+      // 写入当天缓存，刷新页面时直接复用，避免重复拉取
+      saveMarketCache({
+        date: todayText(),
+        fetchedAt: new Date().toISOString(),
+        stocks: enriched,
+        meta: { ...meta, klineCount: count },
+        market: derivedMarket,
+      })
     } catch (error) {
       setWarning(
         `拉取失败：${error instanceof Error ? error.message : String(error)}。` +
@@ -900,6 +947,27 @@ function App() {
       setProgress('')
     }
   }
+
+  // 挂载时：若当天缓存可用则直接加载，否则自动拉取一次
+  fetchAllRef.current = handleFetchAll
+  useEffect(() => {
+    const cached = loadMarketCache()
+    if (cached) {
+      setStocks(cached.stocks)
+      setMarket(cached.market)
+      setDataMeta(cached.meta)
+      const time = new Date(cached.fetchedAt).toLocaleTimeString('zh-CN', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+      setMessage(
+        `已加载本地缓存：${cached.meta.total} 只 A 股（交易日 ${cached.meta.tradeDate}，${time} 拉取）。` +
+          ' 如需更新请点击「拉取最新数据」。',
+      )
+      return
+    }
+    void fetchAllRef.current()
+  }, [])
 
   const handleFillKline = async () => {
     setLoading(true)
