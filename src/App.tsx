@@ -27,6 +27,7 @@ import type {
   DataSourceMeta,
   MarketSnapshot,
   PortfolioHolding,
+  KlineResult,
   ScoredStock,
   StockRecord,
   StrategyConfig,
@@ -155,6 +156,8 @@ const TOTAL_ASSETS_STORAGE_KEY = 'dashu-total-assets'
 const CAPITAL_EVENTS_STORAGE_KEY = 'dashu-capital-events'
 /** 全市场数据缓存：同一天内刷新页面直接复用，避免重复拉取 */
 const MARKET_CACHE_KEY = 'dashu-market-cache'
+/** 当天已补齐的 K 线结果，按代码增量保存，避免重复请求 */
+const DAILY_KLINE_CACHE_KEY = 'dashu-daily-kline-cache'
 
 const navItems: Array<{ key: WorkspaceView; label: string }> = [
   { key: 'overview', label: '市场概况' },
@@ -419,6 +422,51 @@ type MarketCache = {
   market: MarketSnapshot
 }
 
+type DailyKlineCache = {
+  date: string
+  days: number
+  entries: Record<string, KlineResult>
+  completed: boolean
+}
+
+const loadDailyKlineCache = (days: number): DailyKlineCache | null => {
+  try {
+    const raw = localStorage.getItem(DAILY_KLINE_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as DailyKlineCache
+    if (
+      parsed.date !== todayText() ||
+      parsed.days !== days ||
+      !parsed.entries ||
+      typeof parsed.entries !== 'object'
+    ) {
+      return null
+    }
+    return {
+      ...parsed,
+      completed: parsed.completed === true,
+    }
+  } catch {
+    return null
+  }
+}
+
+const createDailyKlineCache = (days: number): DailyKlineCache => ({
+  date: todayText(),
+  days,
+  entries: {},
+  completed: false,
+})
+
+const saveDailyKlineCache = (cache: DailyKlineCache): boolean => {
+  try {
+    localStorage.setItem(DAILY_KLINE_CACHE_KEY, JSON.stringify(cache))
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** 从 localStorage 加载当天缓存，若非当天或数据损坏则返回 null */
 const loadMarketCache = (): MarketCache | null => {
   try {
@@ -464,6 +512,7 @@ function App() {
   const [dataMeta, setDataMeta] = useState<DataSourceMeta | null>(null)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
+  const [fullKlineCompleted, setFullKlineCompleted] = useState(false)
   const [onlyEligible, setOnlyEligible] = useState(false)
   const [onlyNearPbFloor, setOnlyNearPbFloor] = useState(false)
   const [queryingHighCode, setQueryingHighCode] = useState<string | null>(null)
@@ -725,6 +774,17 @@ function App() {
       ).length,
     [scoredStocks],
   )
+  const fullKlineDoneForCurrentStocks = useMemo(() => {
+    if (!fullKlineCompleted) return false
+    const cache = loadDailyKlineCache(config.klineDays)
+    return Boolean(
+      cache?.completed &&
+        stocks.every((stock) => {
+          const symbol = toSymbol(stock.code)
+          return symbol !== null && Boolean(cache.entries[symbol])
+        }),
+    )
+  }, [config.klineDays, fullKlineCompleted, stocks])
   const visibleStocks = useMemo(
     () =>
       scoredStocks.filter(
@@ -900,27 +960,43 @@ function App() {
   }
 
   const handleConfigChange = (key: keyof StrategyConfig, value: number) => {
+    if (key === 'klineDays') {
+      setFullKlineCompleted(
+        loadDailyKlineCache(value)?.completed ?? false,
+      )
+    }
     setConfig((current) => ({ ...current, [key]: value }))
   }
 
   const runKlineStep = async (universe: StockRecord[]) => {
+    const dailyCache =
+      loadDailyKlineCache(config.klineDays) ??
+      createDailyKlineCache(config.klineDays)
+    const stocksWithCachedKline = applyKline(universe, dailyCache.entries)
     const candidates = pickKlineCandidates(
-      scoreStocks(universe, config),
+      scoreStocks(stocksWithCachedKline, config),
       config,
     )
-    if (candidates.length === 0) {
-      return { stocks: universe, count: 0, failed: [] as string[] }
+    const missingCandidates = candidates.filter((code) => {
+      const symbol = toSymbol(code)
+      return symbol !== null && !dailyCache.entries[symbol]
+    })
+
+    let failed: string[] = []
+    if (missingCandidates.length > 0) {
+      const result = await fetchKlines(
+        missingCandidates,
+        config.klineDays,
+        (done, total) => setProgress(`正在补齐候选 K 线：${done}/${total}`),
+      )
+      Object.assign(dailyCache.entries, result.data)
+      failed = result.failed
+      saveDailyKlineCache(dailyCache)
     }
 
-    const { data, failed } = await fetchKlines(
-      candidates,
-      config.klineDays,
-      (done, total) => setProgress(`正在补齐一年/三年低价：${done}/${total}`),
-    )
-
     return {
-      stocks: applyKline(universe, data),
-      count: Object.keys(data).length,
+      stocks: applyKline(universe, dailyCache.entries),
+      count: Object.keys(dailyCache.entries).length,
       failed,
     }
   }
@@ -936,6 +1012,9 @@ function App() {
       setStocks(enriched)
       setMarket(derivedMarket)
       setDataMeta({ ...meta, klineCount: count })
+      setFullKlineCompleted(
+        loadDailyKlineCache(config.klineDays)?.completed ?? false,
+      )
       setMessage(
         `已接入最新数据：${meta.total} 只 A 股，东财交易日 ${meta.tradeDate}，` +
           `其中 ${count} 只补齐了一年/三年低价，并已用腾讯快照刷新现价。`,
@@ -966,10 +1045,21 @@ function App() {
   fetchAllRef.current = handleFetchAll
   useEffect(() => {
     const cached = loadMarketCache()
+    const dailyKlineCache = loadDailyKlineCache(defaultConfig.klineDays)
+    setFullKlineCompleted(dailyKlineCache?.completed ?? false)
     if (cached) {
-      setStocks(cached.stocks)
-      setMarket(cached.market)
-      setDataMeta(cached.meta)
+      const cachedStocks = dailyKlineCache
+        ? applyKline(cached.stocks, dailyKlineCache.entries)
+        : cached.stocks
+      setStocks(cachedStocks)
+      setMarket(deriveMarketSnapshot(cachedStocks))
+      setDataMeta({
+        ...cached.meta,
+        klineCount: Math.max(
+          cached.meta.klineCount,
+          Object.keys(dailyKlineCache?.entries ?? {}).length,
+        ),
+      })
       const time = new Date(cached.fetchedAt).toLocaleTimeString('zh-CN', {
         hour: '2-digit',
         minute: '2-digit',
@@ -984,23 +1074,100 @@ function App() {
   }, [])
 
   const handleFillKline = async () => {
+    const dailyCache =
+      loadDailyKlineCache(config.klineDays) ??
+      createDailyKlineCache(config.klineDays)
+    const allCodes = [...new Set(stocks.map((stock) => stock.code))]
+    const alreadyCovered = allCodes.every((code) => {
+      const symbol = toSymbol(code)
+      return symbol !== null && Boolean(dailyCache.entries[symbol])
+    })
+    if (dailyCache.completed && alreadyCovered) {
+      setFullKlineCompleted(true)
+      setMessage('今日全量 K 线请求已完成，直接复用缓存，不会重复请求。')
+      return
+    }
+    dailyCache.completed = false
+
     setLoading(true)
     setWarning('')
-    setProgress('开始补齐 K 线…')
+    setProgress('准备全市场 K 线…')
     try {
-      const { stocks: enriched, count, failed } = await runKlineStep(stocks)
-      setStocks(enriched)
-      setMarket(deriveMarketSnapshot(enriched))
-      setDataMeta((current) =>
-        current ? { ...current, klineCount: count } : current,
+      const pendingCodes = allCodes.filter((code) => {
+        const symbol = toSymbol(code)
+        return symbol !== null && !dailyCache.entries[symbol]
+      })
+      const failed = new Set<string>(
+        allCodes.filter((code) => toSymbol(code) === null),
       )
-      setMessage(`已为 ${count} 只候选补齐一年/三年低价，并刷新最新现价。`)
-      if (failed.length > 0) {
-        setWarning(`有 ${failed.length} 只候选未能取到 K 线。`)
+      let processed = 0
+      let currentStocks = applyKline(stocks, dailyCache.entries)
+
+      for (let index = 0; index < pendingCodes.length; index += 120) {
+        const batch = pendingCodes.slice(index, index + 120)
+        try {
+          const result = await fetchKlines(
+            batch,
+            config.klineDays,
+            (done) =>
+              setProgress(
+                `全市场补齐 K 线：${processed + done}/${pendingCodes.length}`,
+              ),
+          )
+          Object.assign(dailyCache.entries, result.data)
+          result.failed.forEach((symbol) => failed.add(symbol))
+          currentStocks = applyKline(currentStocks, result.data)
+          setStocks(currentStocks)
+          setMarket(deriveMarketSnapshot(currentStocks))
+          setDataMeta((current) =>
+            current
+              ? {
+                  ...current,
+                  klineCount: allCodes.filter((code) => {
+                    const symbol = toSymbol(code)
+                    return symbol !== null && dailyCache.entries[symbol]
+                  }).length,
+                }
+              : current,
+          )
+          saveDailyKlineCache(dailyCache)
+        } catch {
+          batch.forEach((code) => failed.add(code))
+        }
+        processed += batch.length
+        setProgress(
+          `全市场补齐 K 线：${processed}/${pendingCodes.length}，` +
+            `本次失败 ${failed.size} 只`,
+        )
+      }
+
+      setStocks(currentStocks)
+      setMarket(deriveMarketSnapshot(currentStocks))
+      const missingCodes = allCodes.filter((code) => {
+        const symbol = toSymbol(code)
+        return symbol === null || !dailyCache.entries[symbol]
+      })
+      dailyCache.completed = missingCodes.length === 0
+      const persisted = saveDailyKlineCache(dailyCache)
+      setFullKlineCompleted(dailyCache.completed && persisted)
+
+      if (missingCodes.length > 0) {
+        setMessage(
+          `已取得 ${allCodes.length - missingCodes.length}/${allCodes.length} 只标的的 K 线响应；` +
+            `剩余 ${missingCodes.length} 只会在重试时单独补拉。`,
+        )
+        setWarning('部分标的未能取得 K 线，请稍后重试；已成功数据不会重复请求。')
+      } else if (!persisted) {
+        setMessage(`已完成 ${allCodes.length} 只标的的全量 K 线请求。`)
+        setWarning('浏览器无法保存当日 K 线缓存，刷新页面后可能需要重新补齐。')
+      } else {
+        setMessage(
+          `今日已完成全部 ${allCodes.length} 只标的的 K 线请求；当天再次操作会直接复用缓存。`,
+        )
       }
     } catch (error) {
       setWarning(
-        `补齐失败：${error instanceof Error ? error.message : String(error)}。` +
+        `全量补齐失败：${error instanceof Error ? error.message : String(error)}。` +
           ' 请确认通过 npm run dev 或 npm start 启动（K 线需要本地服务）。',
       )
     } finally {
@@ -1562,8 +1729,16 @@ function App() {
           <button type="button" onClick={handleFetchAll} disabled={loading}>
             {loading ? '处理中…' : '拉取最新数据并评分'}
           </button>
-          <button type="button" onClick={handleFillKline} disabled={loading}>
-            仅补齐 K 线
+          <button
+            type="button"
+            onClick={handleFillKline}
+            disabled={loading || fullKlineDoneForCurrentStocks}
+          >
+            {loading
+              ? '处理中…'
+              : fullKlineDoneForCurrentStocks
+                ? '今日全量 K 线请求已完成'
+                : '全量补齐 K 线'}
           </button>
           <button type="button" onClick={exportScoreTable}>
             导出评分表 CSV
@@ -1624,9 +1799,9 @@ function App() {
         )}
 
         <p className="helper-text">
-          说明：财务与估值字段采用最近公开快照；现价优先使用腾讯最新快照。涨幅得分依赖「一年内最低价」，截图中的涨3依赖「三年内最低价」。为控制请求量，只对
-          <strong>可能达到门槛</strong>的候选（PB+PE 得分 &gt; 门槛 − 100）补 K
-          线，该剪枝不丢结果。当前仍有 {pendingKline} 只未补齐。
+          说明：财务与估值字段采用最近公开快照；现价优先使用腾讯最新快照。首次拉取仍优先补可能达到门槛的候选以尽快完成评分；
+          点击「全量补齐 K 线」可处理当前全部标的。结果按批次缓存，当天重复操作只会重试未成功的标的；
+          全部标的均返回后当天不再请求。当前仍有 {pendingKline} 只缺少一年或三年低点数据，可能是上游无可用历史记录。
         </p>
         <p className="helper-text">
           当前已接入<strong>股息率</strong>、<strong>商誉占净资产</strong>与
