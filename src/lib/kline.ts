@@ -16,7 +16,7 @@ export type KlineBatch = {
   failed: string[]
 }
 
-/** 通过后端代理批量获取前复权一年/三年低价 */
+/** 通过后端代理获取腾讯 52 周高低点及前复权三年低价 */
 export const fetchKlines = async (
   codes: string[],
   days: number,
@@ -59,6 +59,7 @@ export const applyKline = <
   T extends {
     code: string
     price: number | null
+    highPrice1y: number | null
     lowPrice1y: number | null
     lowPrice3y: number | null
   },
@@ -77,6 +78,7 @@ export const applyKline = <
         entry.lastClose !== null && entry.lastClose > 0
           ? entry.lastClose
           : stock.price,
+      highPrice1y: entry.high1y ?? stock.highPrice1y,
       lowPrice1y: entry.low1y ?? stock.lowPrice1y,
       lowPrice3y: entry.low3y ?? stock.lowPrice3y,
     }

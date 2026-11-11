@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { defaultConfig, defaultMarketSnapshot, demoStocks } from './data/stocks'
 import { downloadCsv, toCsv } from './lib/csv'
 import { fetchRealMarketData, fetchStockByCode } from './lib/eastmoney'
 import { normalizeIndustry } from './lib/industry'
-import { applyKline, fetchKlines } from './lib/kline'
+import { applyKline, fetchKlines, toSymbol } from './lib/kline'
 import {
   buildAiHighlights,
   explainStockExclusion,
@@ -69,6 +69,7 @@ const csvHeaders = [
   'debtRatio',
   'dividendYield',
   'marketCap',
+  'highPrice1y',
   'lowPrice1y',
   'lowPrice3y',
   'goodwillRatio',
@@ -267,6 +268,7 @@ const parseCsv = (text: string): StockRecord[] => {
       dividendYield: parseNumberCell(get('dividendYield')),
       goodwillRatio: parseNumberCell(get('goodwillRatio')),
       pledgeRatio: parseNumberCell(get('pledgeRatio')),
+      highPrice1y: parseNumberCell(get('highPrice1y')),
       lowPrice1y: parseNumberCell(get('lowPrice1y')),
       lowPrice3y: parseNumberCell(get('lowPrice3y')),
       isST: parseBoolean(get('isST')),
@@ -463,6 +465,9 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
   const [onlyEligible, setOnlyEligible] = useState(false)
+  const [onlyNearPbFloor, setOnlyNearPbFloor] = useState(false)
+  const [queryingHighCode, setQueryingHighCode] = useState<string | null>(null)
+  const lastAutoHighQueryRef = useRef<string | null>(null)
   const [scoreSortKey, setScoreSortKey] = useState<ScoreSortKey | null>(null)
   const [scoreSortDirection, setScoreSortDirection] = useState<SortDirection>('desc')
   const [activeView, setActiveView] = useState<WorkspaceView>('overview')
@@ -720,7 +725,17 @@ function App() {
       ).length,
     [scoredStocks],
   )
-  const visibleStocks = onlyEligible ? eligibleStocks : scoredStocks
+  const visibleStocks = useMemo(
+    () =>
+      scoredStocks.filter(
+        (stock) =>
+          (!onlyEligible || stock.eligible) &&
+          (!onlyNearPbFloor ||
+            (stock.pbVsFloorPct !== null &&
+              stock.pbVsFloorPct <= PB_FLOOR_NEAR_PCT)),
+      ),
+    [scoredStocks, onlyEligible, onlyNearPbFloor],
+  )
 
   /** 按当前列与方向排序；未选择列时保持原始顺序，空值始终排在最后 */
   const sortedVisibleStocks = useMemo(() => {
@@ -839,7 +854,6 @@ function App() {
           type="button"
           className={isActive ? 'sort-button active' : 'sort-button'}
           onClick={() => toggleScoreSort(key)}
-          title={tooltip}
         >
           <span>{label}</span>
           <span className="sort-arrows" aria-hidden="true">
@@ -994,6 +1008,75 @@ function App() {
       setProgress('')
     }
   }
+
+  const handleQueryYearHigh = useCallback(async (stock: ScoredStock) => {
+    const symbol = toSymbol(stock.code)
+    if (!symbol) {
+      setWarning(`无法识别股票代码 ${stock.code}，暂时无法查询近一年最高价。`)
+      return
+    }
+
+    setQueryingHighCode(stock.code)
+    setWarning('')
+    try {
+      const { data, failed } = await fetchKlines([stock.code], 20)
+      const highPrice1y = data[symbol]?.high1y
+      if (highPrice1y === null || highPrice1y === undefined) {
+        setWarning(
+          failed.includes(symbol)
+            ? `未能获取 ${stock.name} 的行情快照，请稍后重试。`
+            : `${stock.name} 暂无可用的近一年最高价数据。`,
+        )
+        return
+      }
+
+      const updateHighPrice = (items: StockRecord[]) =>
+        items.map((item) =>
+          item.code === stock.code ? { ...item, highPrice1y } : item,
+        )
+      const updatedStocks = updateHighPrice(stocks)
+      setStocks(updatedStocks)
+
+      const cached = loadMarketCache()
+      if (cached) {
+        saveMarketCache({ ...cached, stocks: updateHighPrice(cached.stocks) })
+      }
+      setMessage(
+        `已查询 ${stock.name}（${stock.code}）近一年最高价：${highPrice1y.toFixed(2)}。`,
+      )
+    } catch (error) {
+      setWarning(
+        `查询近一年最高价失败：${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    } finally {
+      setQueryingHighCode((current) =>
+        current === stock.code ? null : current,
+      )
+    }
+  }, [stocks])
+
+  const exactStockQuery = selectedStock &&
+    [selectedStock.code, selectedStock.name].some(
+      (value) => normalize(value) === normalize(stockQuery),
+    )
+    ? `${selectedStock.code}:${normalize(stockQuery)}`
+    : null
+
+  useEffect(() => {
+    if (!selectedStock || !exactStockQuery) {
+      lastAutoHighQueryRef.current = null
+      return
+    }
+    if (lastAutoHighQueryRef.current === exactStockQuery) return
+
+    const timer = window.setTimeout(() => {
+      lastAutoHighQueryRef.current = exactStockQuery
+      void handleQueryYearHigh(selectedStock)
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [exactStockQuery, handleQueryYearHigh, selectedStock])
 
   const handleFileImport = async (
     event: React.ChangeEvent<HTMLInputElement>,
@@ -1269,6 +1352,7 @@ function App() {
       fixed(stock.priceScore, 1),
       fixed(stock.totalScore, 1),
       fixed(stock.winProbability, 1),
+      fixed(stock.highPrice1y),
       fixed(stock.lowPrice1y),
       fixed(stock.lowPrice3y),
       yi(stock.marketCap),
@@ -1302,6 +1386,7 @@ function App() {
           '涨幅得分',
           '三好学生评分',
           '绝对胜算概率(%)',
+          '近一年最高价',
           '一年内最低价',
           '三年内最低价',
           '总市值(亿)',
@@ -1680,7 +1765,7 @@ function App() {
         <div>
           <div className="section-title">
             <h2>个股诊断</h2>
-            <p>这里可以直接查某只股票为什么未进推荐组合。默认已定位到贵州轮胎。</p>
+            <p>输入完整股票代码或名称后自动查询近一年最高价。默认已定位到贵州轮胎。</p>
           </div>
           <div className="control-grid single-column">
             <label>
@@ -1724,6 +1809,13 @@ function App() {
                 </span>
                 <span>涨1 {gainView(selectedStock.gain1y, 0)}</span>
                 <span>涨3 {gainView(selectedStock.gain3y, 0)}</span>
+                <span>
+                  近一年最高价{' '}
+                  {selectedStock.highPrice1y == null &&
+                  queryingHighCode === selectedStock.code
+                    ? '查询中…'
+                    : show(selectedStock.highPrice1y ?? null)}
+                </span>
                 <span className={pbFloorClass(selectedStock.pbVsFloorPct)}>
                   距 PB 底{' '}
                   {selectedStock.pbVsFloorPct === null
@@ -1779,6 +1871,14 @@ function App() {
             onChange={(event) => setOnlyEligible(event.target.checked)}
           />
           只看通过筛选
+        </label>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={onlyNearPbFloor}
+            onChange={(event) => setOnlyNearPbFloor(event.target.checked)}
+          />
+          只看接近 PB 底（≤{PB_FLOOR_NEAR_PCT}%）
         </label>
         <span className="helper-text">共 {visibleStocks.length} 条</span>
       </div>

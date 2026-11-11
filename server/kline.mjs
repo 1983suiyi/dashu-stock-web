@@ -3,11 +3,12 @@
  *
  * 为什么需要它：
  * - 一年内最低价是「三好学生评分」涨幅分项的输入；
+ * - 一年内最高价用于个股诊断查询；
  * - 三年内最低价用于展示截图里的「涨3」字段；
  * - 这两类数据都不适合直接在浏览器端高并发拉取，因此统一由服务端代取。
  *
  * 数据源：
- * - 腾讯 qt.gtimg.cn 行情快照：直接返回 52 周高低点，用于一年内低点；
+ * - 腾讯 qt.gtimg.cn 行情快照：直接返回 52 周高低点；
  * - 腾讯 proxy.finance.qq.com 前复权日线：逐只回看近 3 年，用于三年内低点。
  * 该模块同时被 Vite 开发中间件和独立生产服务器复用，保证两种环境行为一致。
  */
@@ -56,7 +57,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * - 3  = 最新价
  * - 67 = 52 周最高
  * - 68 = 52 周最低
- * 这里只取三好学生评分需要的一年内低点。
+ * 同时返回一年内高低点；低点用于评分，高点用于个股查询展示。
  * @param {string} body
  * @returns {Record<string, KlineEntry>}
  */
@@ -77,12 +78,14 @@ const parseQuotePayload = (body) => {
     const high1y = toNumber(fields[HIGH_1Y_INDEX])
     const low1y = toNumber(fields[LOW_1Y_INDEX])
 
-    if (low1y === null || low1y <= 0) continue
+    const validLow1y = low1y !== null && low1y > 0 ? low1y : null
+    const validHigh1y = high1y !== null && high1y > 0 ? high1y : null
+    if (validLow1y === null && validHigh1y === null) continue
 
     entries[symbol] = {
-      low1y,
+      low1y: validLow1y,
       low3y: null,
-      high1y,
+      high1y: validHigh1y,
       lastClose,
       from: null,
       to: null,

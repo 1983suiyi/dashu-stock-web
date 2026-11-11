@@ -21,6 +21,8 @@ export type StockRecord = {
   goodwillRatio: number | null
   /** 股权质押比例(%)：取最新交易日，缺失时按 0 处理 */
   pledgeRatio: number | null
+  /** 腾讯行情快照提供的近 52 周最高价 */
+  highPrice1y: number | null
   /** 前复权一年内最低价，由后端 K 线代理补齐 */
   lowPrice1y: number | null
   /** 前复权三年内最低价，由后端 K 线代理补齐 */

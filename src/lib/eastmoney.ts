@@ -299,6 +299,7 @@ const toStockRecord = (
     dividendYield: dividendYieldOf(extras.dividendPerShare, price),
     goodwillRatio: extras.goodwillRatio ?? 0,
     pledgeRatio: extras.pledgeRatio ?? 0,
+    highPrice1y: null,
     lowPrice1y: null,
     lowPrice3y: null,
     isST: /ST/i.test(name),
