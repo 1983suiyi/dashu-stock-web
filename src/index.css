@@ -749,6 +749,183 @@ button:disabled {
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* ---------- 周期行业页面 ---------- */
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #dce6f6;
+  white-space: nowrap;
+}
+
+.inline-check input {
+  width: auto;
+  margin: 0;
+  accent-color: #2d66f6;
+}
+
+.cycle-detail {
+  margin: 18px 0 22px;
+}
+
+.cycle-load-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.cycle-load-status p {
+  margin: 0;
+}
+
+.cycle-metric-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 18px;
+}
+
+.cycle-level {
+  color: #8db0ff;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.cycle-row {
+  cursor: pointer;
+}
+
+.cycle-row:hover td {
+  background: rgba(45, 102, 246, 0.1);
+}
+
+.cycle-row.active td {
+  background: rgba(45, 102, 246, 0.18);
+}
+
+.cycle-badge {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(143, 170, 220, 0.28);
+  color: #91a7c6;
+  font-size: 0.8rem;
+}
+
+.cycle-badge.strong {
+  border-color: rgba(255, 166, 87, 0.5);
+  color: #ffc07a;
+}
+
+.cycle-chart {
+  position: relative;
+  padding: 16px;
+  border: 1px solid rgba(143, 170, 220, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cycle-chart.empty {
+  padding: 24px;
+}
+
+.cycle-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.cycle-chart-head strong {
+  color: #f4f7ff;
+  font-size: 1.05rem;
+}
+
+.cycle-chart-head span {
+  color: #91a7c6;
+  font-size: 0.9rem;
+}
+
+.cycle-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.cycle-grid {
+  stroke: rgba(143, 170, 220, 0.12);
+  stroke-width: 1;
+}
+
+.cycle-axis {
+  fill: #7f95b5;
+  font-size: 11px;
+}
+
+.cycle-ref {
+  stroke-width: 1;
+  stroke-dasharray: 6 5;
+}
+
+.cycle-ref.low {
+  stroke: rgba(74, 222, 128, 0.55);
+}
+
+.cycle-ref.high {
+  stroke: rgba(248, 113, 113, 0.5);
+}
+
+.cycle-line {
+  fill: none;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.cycle-line.pb {
+  stroke: #4d8dff;
+  stroke-width: 2;
+}
+
+.cycle-line.median {
+  stroke: rgba(145, 167, 198, 0.75);
+  stroke-width: 1.4;
+  stroke-dasharray: 4 4;
+}
+
+.cycle-current-dot {
+  fill: #ffd166;
+  stroke: #0f1727;
+  stroke-width: 1.5;
+}
+
+.cycle-hover-line {
+  stroke: rgba(219, 230, 249, 0.45);
+  stroke-width: 1;
+}
+
+.cycle-hover-dot {
+  fill: #dce6f6;
+}
+
+.cycle-tooltip {
+  position: absolute;
+  padding: 6px 10px;
+  border: 1px solid rgba(143, 170, 220, 0.28);
+  border-radius: 10px;
+  background: rgba(9, 18, 31, 0.94);
+  color: #dce6f6;
+  font-size: 0.82rem;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.cycle-tooltip strong {
+  display: block;
+  color: #f4f7ff;
+}
+
 @media (max-width: 1100px) {
   .workspace-shell,
   .hero,

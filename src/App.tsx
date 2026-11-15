@@ -5,6 +5,14 @@ import { fetchRealMarketData, fetchStockByCode } from './lib/eastmoney'
 import { normalizeIndustry } from './lib/industry'
 import { applyKline, fetchKlines, toSymbol } from './lib/kline'
 import {
+  CYCLICAL_STRONG_THRESHOLD,
+  classifyCyclical,
+  computeCycleStats,
+  formatMonth,
+  scoreCyclicality,
+} from './lib/cycle'
+import { IndustryCycleChart } from './components/IndustryCycleChart'
+import {
   buildAiHighlights,
   explainStockExclusion,
   summarizeIndustries,
@@ -28,10 +36,13 @@ import type {
   MarketSnapshot,
   PortfolioHolding,
   KlineResult,
+  CycleStats,
+  IndustryCycleResponse,
   ScoredStock,
   StockRecord,
   StrategyConfig,
 } from './types'
+import type { CyclicalityScore } from './lib/cycle'
 
 const researchHighlights = [
   {
@@ -84,6 +95,7 @@ type WorkspaceView =
   | 'portfolio'
   | 'portfolioSummary'
   | 'industries'
+  | 'cycle'
   | 'archives'
   | 'ai'
 
@@ -117,6 +129,22 @@ type HoldingDetail = PortfolioHolding & {
 
 type CapitalEventType = '入金' | '出金' | '分红' | '取现'
 
+type CycleSortKey =
+  | 'score'
+  | 'current'
+  | 'floor'
+  | 'percentile'
+  | 'amplitude'
+  | 'trend1y'
+
+type CycleRow = {
+  industry: string
+  /** 命中的预置周期行业分组，未命中为 null */
+  group: string | null
+  stats: CycleStats
+  score: CyclicalityScore
+}
+
 type CapitalEvent = {
   id: string
   date: string
@@ -132,6 +160,7 @@ type ScoreSortKey =
   | 'holding'
   | 'score'
   | 'pb'
+  | 'stockPbFloor'
   | 'pe'
   | 'price'
   | 'gain1y'
@@ -165,6 +194,7 @@ const navItems: Array<{ key: WorkspaceView; label: string }> = [
   { key: 'portfolio', label: '持仓' },
   { key: 'portfolioSummary', label: '持仓汇总' },
   { key: 'industries', label: '细分行业' },
+  { key: 'cycle', label: '周期行业' },
   { key: 'archives', label: '归档' },
   { key: 'ai', label: 'AI' },
 ]
@@ -534,6 +564,19 @@ function App() {
   const [totalAssetsInput, setTotalAssetsInput] = useState('')
   const [capitalEvents, setCapitalEvents] = useState<CapitalEvent[]>([])
   const [capitalDateInput, setCapitalDateInput] = useState(todayText())
+  const [historicalPbFloors, setHistoricalPbFloors] = useState<Record<string, number> | null>(null)
+  const [historicalStockPbFloors, setHistoricalStockPbFloors] = useState<Record<string, number> | null>(null)
+  const [industryCycle, setIndustryCycle] = useState<IndustryCycleResponse | null>(null)
+  const [industryCycleLoading, setIndustryCycleLoading] = useState(true)
+  const [industryCycleError, setIndustryCycleError] = useState<string | null>(null)
+  const [industryCycleFetchAttempt, setIndustryCycleFetchAttempt] = useState(0)
+  const [cycleQuery, setCycleQuery] = useState('')
+  const [cycleSelectValue, setCycleSelectValue] = useState('')
+  const [cycleOnlyCyclical, setCycleOnlyCyclical] = useState(true)
+  const [cycleMinScore, setCycleMinScore] = useState(0)
+  const [cycleSortKey, setCycleSortKey] = useState<CycleSortKey>('score')
+  const [cycleSortDirection, setCycleSortDirection] = useState<SortDirection>('desc')
+  const [selectedCycleIndustry, setSelectedCycleIndustry] = useState<string | null>(null)
   const [capitalTypeInput, setCapitalTypeInput] = useState<CapitalEventType>('入金')
   const [capitalAmountInput, setCapitalAmountInput] = useState('')
   const [capitalNoteInput, setCapitalNoteInput] = useState('')
@@ -612,6 +655,68 @@ function App() {
     }
   }, [])
 
+  // 拉取服务端按「大数模拟器」口径计算的行业历史统计 PB 底
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const resp = await fetch('/api/pb-floor')
+        if (!resp.ok) return
+        const data = await resp.json()
+        if (cancelled) return
+        if (data && data.floors && typeof data.floors === 'object') {
+          setHistoricalPbFloors(data.floors)
+        }
+        if (data && data.stockFloors && typeof data.stockFloors === 'object') {
+          setHistoricalStockPbFloors(data.stockFloors)
+        }
+      } catch {
+        // 服务端不可用时静默回退到截面最低 PB
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 拉取服务端缓存的行业 PB 月度序列（数据源从 2018 年起可用）
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setIndustryCycleLoading(true)
+      setIndustryCycleError(null)
+      try {
+        const resp = await fetch('/api/industry-cycle')
+        if (!resp.ok) {
+          throw new Error(`接口请求失败（HTTP ${resp.status}）`)
+        }
+        const contentType = resp.headers.get('content-type') ?? ''
+        if (!contentType.includes('application/json')) {
+          throw new Error('当前服务未提供行业周期数据接口，请重启应用服务后重试')
+        }
+        const data = (await resp.json()) as IndustryCycleResponse
+        if (cancelled) return
+        if (!data || !Array.isArray(data.dates) || !data.series) {
+          throw new Error('行业周期接口返回的数据格式不正确')
+        }
+        setIndustryCycle(data)
+      } catch (error) {
+        if (!cancelled) {
+          setIndustryCycleError(
+            error instanceof Error
+              ? error.message
+              : '行业周期数据加载失败，请检查服务端状态后重试',
+          )
+        }
+      } finally {
+        if (!cancelled) setIndustryCycleLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [industryCycleFetchAttempt])
+
   useEffect(() => {
     try {
       localStorage.setItem(CASH_BALANCE_STORAGE_KEY, String(cashBalance))
@@ -640,8 +745,14 @@ function App() {
   }, [capitalEvents])
 
   const scoredStocks = useMemo(
-    () => scoreStocks(stocks, config),
-    [stocks, config],
+    () =>
+      scoreStocks(
+        stocks,
+        config,
+        historicalPbFloors ?? undefined,
+        historicalStockPbFloors ?? undefined,
+      ),
+    [stocks, config, historicalPbFloors, historicalStockPbFloors],
   )
   const eligibleStocks = useMemo(
     () => scoredStocks.filter((stock) => stock.eligible),
@@ -749,8 +860,8 @@ function App() {
   const marketSummary = useMemo(() => summarizeMarket(market), [market])
   const exposure = useMemo(() => portfolioExposure(portfolio), [portfolio])
   const industrySummaries = useMemo(
-    () => summarizeIndustries(scoredStocks),
-    [scoredStocks],
+    () => summarizeIndustries(scoredStocks, historicalPbFloors ?? undefined),
+    [scoredStocks, historicalPbFloors],
   )
   const portfolioSummaries = useMemo(
     () => summarizePortfolioIndustries(holdingDetails),
@@ -813,6 +924,8 @@ function App() {
           return stock.totalScore
         case 'pb':
           return stock.pb
+        case 'stockPbFloor':
+          return stock.stockPbFloor
         case 'pe':
           return stock.pe
         case 'price':
@@ -882,6 +995,8 @@ function App() {
       '三好学生评分（满分 300）= PB 得分 + PE 得分 + 涨幅得分。> 200 分视为入池门槛。',
     pb:
       '市净率。颜色按距行业 PB 底的偏离着色：绿=贴近底部，黄=已离开，红=明显偏离。悬停可看具体偏离值。',
+    stockPbFloor:
+      '个股 PB 底：历史月度采样最低正 PB 与当前 PB 取较低值，避免月内新低未被月度采样捕捉。',
     pe: '市盈率(TTM)。亏损或负值记为无效，不参与估值评分。',
     price: '当前现价。优先使用腾讯快照实时价，缺省时回退东方财富交易日快照。',
     gain1y:
@@ -950,6 +1065,103 @@ function App() {
     })
   }, [industryQuery, industrySummaries])
 
+  /**
+   * 周期行业页面数据：把服务端的月度 PB 序列换算成周期特征与周期性评分，
+   * 再按搜索词、是否周期行业、最低评分做筛选。
+   */
+  const cycleIndustryOptions = useMemo<CycleRow[]>(() => {
+    if (!industryCycle) return []
+    return Object.entries(industryCycle.series)
+      .map<CycleRow>(([industry, series]) => {
+        const stats = computeCycleStats(series, industryCycle.dates)
+        const group = classifyCyclical(industry)
+        return { industry, group, stats, score: scoreCyclicality(group, stats) }
+      })
+      .filter((row) => row.stats.current !== null)
+      .filter((row) => (cycleOnlyCyclical ? row.group !== null : true))
+      .filter((row) => row.score.total >= cycleMinScore)
+      .sort((a, b) => a.industry.localeCompare(b.industry))
+  }, [industryCycle, cycleOnlyCyclical, cycleMinScore])
+
+  const cycleRows = useMemo<CycleRow[]>(() => {
+    const keyword = normalize(cycleQuery)
+    const valueOf = (row: CycleRow): number | null => {
+      switch (cycleSortKey) {
+        case 'current':
+          return row.stats.current
+        case 'floor':
+          return row.stats.min
+        case 'percentile':
+          return row.stats.percentile
+        case 'amplitude':
+          return row.stats.amplitude
+        case 'trend1y':
+          return row.stats.trend1y
+        default:
+          return row.score.total
+      }
+    }
+
+    return cycleIndustryOptions
+      .filter((row) => (keyword ? row.industry.toLowerCase().includes(keyword) : true))
+      .sort((a, b) => {
+        const left = valueOf(a)
+        const right = valueOf(b)
+        if (left === null && right === null) return a.industry.localeCompare(b.industry)
+        if (left === null) return 1
+        if (right === null) return -1
+        const diff = cycleSortDirection === 'desc' ? right - left : left - right
+        return diff !== 0 ? diff : a.industry.localeCompare(b.industry)
+      })
+  }, [
+    cycleIndustryOptions,
+    cycleQuery,
+    cycleSortKey,
+    cycleSortDirection,
+  ])
+
+  const selectedCycleRow =
+    cycleRows.find((row) => row.industry === selectedCycleIndustry) ??
+    cycleRows[0] ??
+    null
+
+  const handleCycleSort = (key: CycleSortKey) => {
+    if (cycleSortKey === key) {
+      setCycleSortDirection((current) => (current === 'desc' ? 'asc' : 'desc'))
+      return
+    }
+    setCycleSortKey(key)
+    setCycleSortDirection(key === 'percentile' ? 'asc' : 'desc')
+  }
+
+  const renderCycleSortHeader = (key: CycleSortKey, label: string) => {
+    const isActive = cycleSortKey === key
+    return (
+      <th
+        key={key}
+        aria-sort={
+          isActive ? (cycleSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'
+        }
+      >
+        <button
+          type="button"
+          className={isActive ? 'sort-button active' : 'sort-button'}
+          onClick={() => handleCycleSort(key)}
+        >
+          <span>{label}</span>
+          <span className="sort-arrows" aria-hidden="true">
+            <span className={isActive && cycleSortDirection === 'asc' ? 'arrow on' : 'arrow'}>
+              ▲
+            </span>
+            <span className={isActive && cycleSortDirection === 'desc' ? 'arrow on' : 'arrow'}>
+              ▼
+            </span>
+          </span>
+        </button>
+      </th>
+    )
+  }
+
   const persistSnapshots = (next: ArchiveSnapshot[]) => {
     setSnapshots(next)
     try {
@@ -974,7 +1186,12 @@ function App() {
       createDailyKlineCache(config.klineDays)
     const stocksWithCachedKline = applyKline(universe, dailyCache.entries)
     const candidates = pickKlineCandidates(
-      scoreStocks(stocksWithCachedKline, config),
+      scoreStocks(
+        stocksWithCachedKline,
+        config,
+        historicalPbFloors ?? undefined,
+        historicalStockPbFloors ?? undefined,
+      ),
       config,
     )
     const missingCandidates = candidates.filter((code) => {
@@ -1510,6 +1727,7 @@ function App() {
         : '',
       fixed(stock.mineScore, 0),
       fixed(stock.pb),
+      fixed(stock.stockPbFloor),
       fixed(stock.pe),
       fixed(stock.price),
       percent(stock.gain1y),
@@ -1544,6 +1762,7 @@ function App() {
           '持仓(%)',
           '扫雷宝',
           '当前市净率',
+          '个股PB底',
           'PE',
           '现价',
           '一年涨幅(%)',
@@ -2067,6 +2286,7 @@ function App() {
               {renderScoreSortHeader('holding', '持仓')}
               {renderScoreSortHeader('score', '大数分')}
               {renderScoreSortHeader('pb', 'PB')}
+              {renderScoreSortHeader('stockPbFloor', '个股PB底')}
               {renderScoreSortHeader('pe', 'PE')}
               {renderScoreSortHeader('price', '现价')}
               {renderScoreSortHeader('gain1y', '涨1')}
@@ -2110,6 +2330,7 @@ function App() {
                 <td className={pbFloorClass(stock.pbVsFloorPct)} title={pbFloorTitle(stock)}>
                   {show(stock.pb)}
                 </td>
+                <td>{show(stock.stockPbFloor)}</td>
                 <td>{show(stock.pe)}</td>
                 <td>{show(stock.price)}</td>
                 <td>{gainView(stock.gain1y, 0)}</td>
@@ -2549,6 +2770,206 @@ function App() {
     </section>
   )
 
+  const cycleSection = (
+    <section className="panel">
+      <div className="section-title">
+        <h2>周期行业</h2>
+        <p>
+          先按预置的经典周期行业清单命中，再用行业 PB 月度序列的振幅与波动强度补足评分；
+          右侧（下方）曲线为该行业 2014 年至今的市值加权 PB（虚线为中位数），
+          并标注历史高低点与当前所处分位。
+        </p>
+      </div>
+
+      <div className="action-row">
+        <label className="inline-search">
+          <span>搜索行业</span>
+          <input
+            value={cycleQuery}
+            onChange={(event) => {
+              setCycleQuery(event.target.value)
+              setCycleSelectValue('')
+            }}
+            placeholder="例如 有色 / 水泥 / 生猪"
+          />
+        </label>
+        <label className="inline-search">
+          <span>或从行业列表选择</span>
+          <select
+            value={cycleSelectValue}
+            onChange={(event) => {
+              const industry = event.target.value
+              setCycleSelectValue(industry)
+              setCycleQuery(industry)
+              if (industry) setSelectedCycleIndustry(industry)
+            }}
+          >
+            <option value="">选择周期行业</option>
+            {industryCycle === null ? (
+              <option value="__status__" disabled>
+                {industryCycleLoading
+                  ? '行业列表加载中…'
+                  : industryCycleError
+                    ? '行业数据暂不可用'
+                    : '暂无行业数据'}
+              </option>
+            ) : cycleIndustryOptions.length > 0 ? (
+              cycleIndustryOptions.map((row) => (
+                <option key={row.industry} value={row.industry}>
+                  {row.industry}（{row.group ?? '非预置'} · {row.score.total.toFixed(0)}分）
+                </option>
+              ))
+            ) : (
+              <option value="__empty__" disabled>
+                当前筛选条件下暂无行业
+              </option>
+            )}
+          </select>
+        </label>
+        <label className="inline-search">
+          <span>最低周期评分</span>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            value={cycleMinScore}
+            onChange={(event) => {
+              const next = Number(event.target.value)
+              setCycleMinScore(Number.isFinite(next) ? Math.min(100, Math.max(0, next)) : 0)
+            }}
+          />
+        </label>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={cycleOnlyCyclical}
+            onChange={(event) => setCycleOnlyCyclical(event.target.checked)}
+          />
+          <span>只看命中预置清单的行业</span>
+        </label>
+      </div>
+
+      {industryCycle === null ? (
+        <div className="cycle-load-status" role={industryCycleError ? 'alert' : 'status'}>
+          <p className={industryCycleError ? 'helper-text error' : 'helper-text'}>
+            {industryCycleLoading
+              ? '正在从服务端获取行业 PB 历史序列（数据源覆盖 2018 年至今）。首次生成缓存约需 2–3 分钟。'
+              : industryCycleError}
+          </p>
+          {industryCycleError && (
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => setIndustryCycleFetchAttempt((attempt) => attempt + 1)}
+            >
+              重试加载
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          {selectedCycleRow && (
+            <div className="cycle-detail">
+              <div className="metric-grid cycle-metric-grid">
+                <article className="metric-card">
+                  <span>当前 PB</span>
+                  <strong>{show(selectedCycleRow.stats.current)}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>历史最低 PB（{formatMonth(selectedCycleRow.stats.minDate)}）</span>
+                  <strong>{show(selectedCycleRow.stats.min)}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>当前历史分位</span>
+                  <strong>{percentView(selectedCycleRow.stats.percentile, 0)}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>周期性评分 / 归类</span>
+                  <strong>
+                    {selectedCycleRow.score.total.toFixed(0)}
+                    <small className="cycle-level"> {selectedCycleRow.score.level}</small>
+                  </strong>
+                </article>
+              </div>
+              <IndustryCycleChart
+                industry={selectedCycleRow.industry}
+                dates={industryCycle.dates}
+                series={industryCycle.series[selectedCycleRow.industry]}
+                stats={selectedCycleRow.stats}
+              />
+            </div>
+          )}
+
+          {cycleRows.length === 0 ? (
+            <p className="helper-text">
+              没有符合条件的行业，可尝试降低周期评分门槛或关闭「只看命中预置清单的行业」。
+            </p>
+          ) : (
+            <div className="table-wrap tall">
+              <table>
+                <thead>
+                  <tr>
+                    <th>细分行业</th>
+                    <th>周期归类</th>
+                    {renderCycleSortHeader('score', '周期评分')}
+                    {renderCycleSortHeader('current', '当前PB')}
+                    {renderCycleSortHeader('floor', '历史最低PB')}
+                    {renderCycleSortHeader('percentile', '当前分位')}
+                    {renderCycleSortHeader('amplitude', '振幅(倍)')}
+                    {renderCycleSortHeader('trend1y', '近一年')}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cycleRows.map((row) => (
+                    <tr
+                      key={row.industry}
+                      className={
+                        selectedCycleRow?.industry === row.industry
+                          ? 'cycle-row active'
+                          : 'cycle-row'
+                      }
+                      onClick={() => setSelectedCycleIndustry(row.industry)}
+                    >
+                      <td>{row.industry}</td>
+                      <td>
+                        {row.group ?? '—'}
+                        <span
+                          className={
+                            row.score.total >= CYCLICAL_STRONG_THRESHOLD
+                              ? 'cycle-badge strong'
+                              : 'cycle-badge'
+                          }
+                        >
+                          {row.score.level}
+                        </span>
+                      </td>
+                      <td>{row.score.total.toFixed(1)}</td>
+                      <td>{show(row.stats.current)}</td>
+                      <td>
+                        {show(row.stats.min)}
+                        <span className="helper-text">
+                          {' '}
+                          {formatMonth(row.stats.minDate)}
+                        </span>
+                      </td>
+                      <td>{percentView(row.stats.percentile, 0)}</td>
+                      <td>{fixed(row.stats.amplitude === null ? null : 1 + row.stats.amplitude, 2)}</td>
+                      <td>
+                        {row.stats.trend1y === null
+                          ? '—'
+                          : `${row.stats.trend1y >= 0 ? '+' : ''}${row.stats.trend1y.toFixed(1)}%`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  )
+
   const archivesSection = (
     <section className="panel">
       <div className="section-title">
@@ -2641,6 +3062,7 @@ function App() {
         {activeView === 'portfolio' && portfolioSection}
         {activeView === 'portfolioSummary' && portfolioSummarySection}
         {activeView === 'industries' && industriesSection}
+        {activeView === 'cycle' && cycleSection}
         {activeView === 'archives' && archivesSection}
         {activeView === 'ai' && aiSection}
 

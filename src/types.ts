@@ -73,6 +73,8 @@ export type ScoredStock = StockRecord & {
   industryDebtMedianLimit: number | null
   /** 同细分行业内的最低正 PB（PB 底），口径与「细分行业」表一致 */
   industryPbFloor: number | null
+  /** 个股历史 PB 低点：该股票历史各期最低正 PB（模拟器「个股历史PB低点」口径） */
+  stockPbFloor: number | null
   /** 个股 PB 相对行业 PB 底的偏离幅度(%)，越接近 0 越贴近行业底部 */
   pbVsFloorPct: number | null
   debtAboveIndustryMedian: boolean | null
@@ -122,6 +124,45 @@ export type KlineResult = {
   lastClose: number | null
   from: string | null
   to: string | null
+}
+
+/** 单个细分行业按月的 PB 序列（与 dates 逐项对齐，无样本的位置为 null） */
+export type IndustryCycleSeries = {
+  /** 市值加权 PB（Σ总市值 / Σ净资产） */
+  pb: (number | null)[]
+  /** 行业中位数 PB，用于规避超大市值个股主导曲线 */
+  median: (number | null)[]
+  /** 当月参与统计的个股数量 */
+  count: number[]
+}
+
+export type IndustryCycleResponse = {
+  /** 序列对应的月份列表，格式 YYYY-MM-01 */
+  dates: string[]
+  /** 细分行业名 → 月度序列 */
+  series: Record<string, IndustryCycleSeries>
+  cached: boolean
+  timestamp: number
+  industries: number
+}
+
+/** 由月度 PB 序列归纳出的周期特征 */
+export type CycleStats = {
+  /** 有效月份数 */
+  months: number
+  current: number | null
+  min: number | null
+  max: number | null
+  minDate: string | null
+  maxDate: string | null
+  /** 当前 PB 在历史分布中的分位（0~100，越低越接近历史底部） */
+  percentile: number | null
+  /** 振幅：最高/最低 - 1 */
+  amplitude: number | null
+  /** 波动率：月度 PB 环比绝对变化的均值 */
+  volatility: number | null
+  /** 近 12 个月 PB 变化率（%） */
+  trend1y: number | null
 }
 
 export type DataSourceMeta = {

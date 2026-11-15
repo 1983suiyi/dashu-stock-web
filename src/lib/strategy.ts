@@ -121,11 +121,41 @@ export const industryDebtMedians = (stocks: StockRecord[]) => {
 }
 
 /**
- * 各行业「PB 底」：该细分行业内最低的正 PB。
- * 与「细分行业」表的 PB底 口径保持一致，用于判断个股是否贴近行业底部。
+ * 各行业「PB 底」。
+ *
+ * 优先使用服务端按「大数模拟器」口径计算的历史统计 PB 底
+ * （行业内个股 PB 分布第 5 百分位数的历史最低值，按 BOARD_NAME 索引）。
+ * 若未提供历史数据，则回退到当前截面最低正 PB（保守兜底）。
+ *
+ * 同一标准化行业可能对应多个 BOARD_NAME（如「食品加工制造」来自
+ * 「调味发酵品Ⅱ」和「食品加工」），此时取所有来源 BOARD_NAME 中
+ * 最低的 PB 底作为该行业的 PB 底。
  */
-export const industryPbFloors = (stocks: StockRecord[]) => {
+export const industryPbFloors = (
+  stocks: StockRecord[],
+  historicalFloors?: Record<string, number>,
+): Map<string, number> => {
   const grouped = new Map<string, number>()
+
+  if (historicalFloors) {
+    // 按标准化行业聚合，取所有来源 BOARD_NAME 的最低 PB 底
+    const byIndustry = new Map<string, number[]>()
+    for (const stock of stocks) {
+      const source = stock.sourceIndustry
+      if (!source) continue
+      const floor = historicalFloors[source]
+      if (floor === undefined || floor <= 0) continue
+      const list = byIndustry.get(stock.industry) ?? []
+      list.push(floor)
+      byIndustry.set(stock.industry, list)
+    }
+    for (const [industry, floors] of byIndustry) {
+      grouped.set(industry, Math.min(...floors))
+    }
+    if (grouped.size > 0) return grouped
+  }
+
+  // 回退：当前截面最低正 PB
   for (const stock of stocks) {
     if (stock.pb === null || stock.pb <= 0) continue
     const current = grouped.get(stock.industry)
@@ -139,11 +169,13 @@ export const industryPbFloors = (stocks: StockRecord[]) => {
 export const scoreStocks = (
   stocks: StockRecord[],
   config: StrategyConfig,
+  historicalPbFloors?: Record<string, number>,
+  historicalStockPbFloors?: Record<string, number>,
 ): ScoredStock[] => {
   const [pbLo, pbHi] = pbBand(config.discount)
   const [peLo, peHi] = peBand(config.discount)
   const debtMedians = industryDebtMedians(stocks)
-  const pbFloors = industryPbFloors(stocks)
+  const pbFloors = industryPbFloors(stocks, historicalPbFloors)
 
   return stocks
     .map<ScoredStock>((stock) => {
@@ -173,6 +205,14 @@ export const scoreStocks = (
 
       const industryDebtMedian = debtMedians.get(stock.industry) ?? null
       const industryPbFloor = pbFloors.get(stock.industry) ?? null
+      const historicalStockPbFloor = historicalStockPbFloors?.[stock.code] ?? null
+      // Monthly snapshots can miss a newer intramonth low; include the current PB as an observation.
+      const stockPbFloor =
+        stock.pb !== null && stock.pb > 0
+          ? historicalStockPbFloor === null
+            ? stock.pb
+            : Math.min(historicalStockPbFloor, stock.pb)
+          : historicalStockPbFloor
       const pbVsFloorPct =
         stock.pb !== null && stock.pb > 0 && industryPbFloor !== null && industryPbFloor > 0
           ? (stock.pb / industryPbFloor - 1) * 100
@@ -237,6 +277,7 @@ export const scoreStocks = (
         industryDebtMedian,
         industryDebtMedianLimit,
         industryPbFloor,
+        stockPbFloor,
         pbVsFloorPct,
         debtAboveIndustryMedian,
         eligible,
