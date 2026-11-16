@@ -177,6 +177,9 @@ type ScoreSortKey =
 
 type SortDirection = 'asc' | 'desc'
 
+/** 评分表范围：全部 / 三低池（通过筛选）/ 排雷通过 */
+type ScoreScope = 'all' | 'eligible' | 'riskPassed'
+
 /** 文本类列默认升序，数值类列默认降序 */
 const TEXT_SORT_KEYS: ScoreSortKey[] = ['name', 'industry']
 
@@ -522,6 +525,20 @@ const getRiskItems = (stock: ScoredStock): RiskItem[] => {
   return items
 }
 
+/** 触发硬过滤的扫雷项数量（null 表示数据缺失，不计入） */
+const riskTriggeredCount = (stock: ScoredStock) =>
+  getRiskItems(stock).filter((item) => item.triggered === true).length
+
+/** 扫雷是否全部通过：只有明确触发的项才算未通过，数据缺失按通过处理 */
+const riskPassed = (stock: ScoredStock) => riskTriggeredCount(stock) === 0
+
+/** 金融行业（银行/保险/证券/多元金融），大数投资原则不纳入组合 */
+const FINANCIAL_KEYWORDS = ['银行', '保险', '证券', '多元金融', '非银金融', '金融服务']
+const isFinancialStock = (stock: ScoredStock) =>
+  FINANCIAL_KEYWORDS.some(
+    (keyword) => stock.sector.includes(keyword) || stock.industry.includes(keyword),
+  )
+
 const normalize = (value: string) => value.trim().toLowerCase()
 const todayText = () => new Date().toISOString().slice(0, 10)
 
@@ -625,7 +642,8 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
   const [fullKlineCompleted, setFullKlineCompleted] = useState(false)
-  const [onlyEligible, setOnlyEligible] = useState(false)
+  const [scoreScope, setScoreScope] = useState<ScoreScope>('all')
+  const [excludeFinancial, setExcludeFinancial] = useState(false)
   const [onlyNearPbFloor, setOnlyNearPbFloor] = useState(false)
   const [queryingHighCode, setQueryingHighCode] = useState<string | null>(null)
   const lastAutoHighQueryRef = useRef<string | null>(null)
@@ -983,12 +1001,15 @@ function App() {
     () =>
       scoredStocks.filter(
         (stock) =>
-          (!onlyEligible || stock.eligible) &&
+          (!excludeFinancial || !isFinancialStock(stock)) &&
+          (scoreScope === 'all' ||
+            (scoreScope === 'eligible' && stock.eligible) ||
+            (scoreScope === 'riskPassed' && riskPassed(stock))) &&
           (!onlyNearPbFloor ||
             (stock.pbVsFloorPct !== null &&
               stock.pbVsFloorPct <= PB_FLOOR_NEAR_PCT)),
       ),
-    [scoredStocks, onlyEligible, onlyNearPbFloor],
+    [scoredStocks, scoreScope, excludeFinancial, onlyNearPbFloor],
   )
 
   /** 按当前列与方向排序；未选择列时保持原始顺序，空值始终排在最后 */
@@ -1094,7 +1115,7 @@ function App() {
     pledgeRatio: '股权质押比例(%)，最新交易日数据，来自东方财富 RPT_CSDC_LIST_NEWEST。',
     goodwillRatio: '商誉占净资产比例(%)，最新报告期，来自东方财富 RPT_GOODWILL_STOCKDETAILS。',
     debtRatio:
-      '资产负债率(%) / 宽容上限(%)。上限 = 行业资产负债率中位数 × (1 + 宽容幅度，默认 15%)。超过上限不予入池。',
+      '资产负债率(%)，右侧小字为该值相对同行业中位数的偏离（百分点）。宽容上限 = 行业资产负债率中位数 × (1 + 宽容幅度，默认 15%)，超过上限不予入池。',
     eligible: '入池状态：通过 = 满足全部筛选条件；未通过 = 至少一项不满足。',
   }
 
@@ -2387,13 +2408,42 @@ function App() {
         <button type="button" onClick={exportScoreTable}>
           导出为 CSV
         </button>
+        <div className="scope-tabs" role="tablist" aria-label="股票范围">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={scoreScope === 'eligible'}
+            className={scoreScope === 'eligible' ? 'scope-tab active' : 'scope-tab'}
+            onClick={() => setScoreScope('eligible')}
+          >
+            三低池
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={scoreScope === 'riskPassed'}
+            className={scoreScope === 'riskPassed' ? 'scope-tab active' : 'scope-tab'}
+            onClick={() => setScoreScope('riskPassed')}
+          >
+            排雷通过
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={scoreScope === 'all'}
+            className={scoreScope === 'all' ? 'scope-tab active' : 'scope-tab'}
+            onClick={() => setScoreScope('all')}
+          >
+            全市场
+          </button>
+        </div>
         <label className="toggle">
           <input
             type="checkbox"
-            checked={onlyEligible}
-            onChange={(event) => setOnlyEligible(event.target.checked)}
+            checked={excludeFinancial}
+            onChange={(event) => setExcludeFinancial(event.target.checked)}
           />
-          只看通过筛选
+          剔除金融（银行/保险/证券）
         </label>
         <label className="toggle">
           <input
@@ -2425,9 +2475,9 @@ function App() {
               {renderScoreSortHeader('dividendYield', '股息率')}
               {renderScoreSortHeader('pledgeRatio', '质押率')}
               {renderScoreSortHeader('goodwillRatio', '商誉')}
-              {renderScoreSortHeader('debtRatio', '资产负债 / 宽容上限')}
+              {renderScoreSortHeader('debtRatio', '资产负债率')}
               {renderScoreSortHeader('eligible', '状态')}
-              <th>风险提示</th>
+              <th>排雷</th>
             </tr>
           </thead>
           <tbody>
@@ -2436,6 +2486,14 @@ function App() {
                 ...stock.notes,
                 ...stock.missingFields.map((field) => `待补：${field}`),
               ]
+              const riskItems = getRiskItems(stock)
+              const triggeredCount = riskItems.filter(
+                (item) => item.triggered === true,
+              ).length
+              const debtDeviation =
+                stock.debtRatio !== null && stock.industryDebtMedian !== null
+                  ? stock.debtRatio - stock.industryDebtMedian
+                  : null
 
               return (
               <tr key={stock.code}>
@@ -2470,7 +2528,20 @@ function App() {
                 <td>{percentView(stock.pledgeRatio, 1)}</td>
                 <td>{percentView(stock.goodwillRatio, 1)}</td>
                 <td>
-                  {show(stock.debtRatio, 1)} / {show(stock.industryDebtMedianLimit, 1)}
+                  {show(stock.debtRatio, 1)}
+                  {debtDeviation !== null && (
+                    <span
+                      className={
+                        stock.debtAboveIndustryMedian === true
+                          ? 'debt-dev danger'
+                          : 'debt-dev'
+                      }
+                    >
+                      {' '}
+                      {debtDeviation >= 0 ? '+' : ''}
+                      {debtDeviation.toFixed(0)}
+                    </span>
+                  )}
                 </td>
                 <td>
                   <span className={stock.eligible ? 'status ok' : 'status muted'}>
@@ -2478,8 +2549,17 @@ function App() {
                   </span>
                 </td>
                 <td className="risk-cell">
+                  <span
+                    className={
+                      triggeredCount > 0
+                        ? 'risk-status danger'
+                        : 'risk-status ok'
+                    }
+                  >
+                    {triggeredCount > 0 ? `${triggeredCount} 项` : '通过'}
+                  </span>
                   <div className="risk-dots">
-                    {getRiskItems(stock).map((item) => (
+                    {riskItems.map((item) => (
                       <span
                         key={item.key}
                         className={`risk-dot ${

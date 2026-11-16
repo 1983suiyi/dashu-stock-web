@@ -855,6 +855,70 @@ button:disabled {
   background: rgba(143, 170, 220, 0.16);
 }
 
+/* 评分表：排雷状态文字（通过 / N 项） */
+.risk-status {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  line-height: 1.4;
+}
+
+.risk-status.ok {
+  color: #9ef0bf;
+  background: rgba(49, 189, 108, 0.16);
+}
+
+.risk-status.danger {
+  color: #ff9c8f;
+  background: rgba(255, 96, 72, 0.2);
+}
+
+/* 评分表：资产负债率相对行业中位数的偏离（百分点） */
+.debt-dev {
+  margin-left: 4px;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: #91a7c6;
+}
+
+.debt-dev.danger {
+  color: #ff7a6b;
+  font-weight: 600;
+}
+
+/* 评分表：范围切换标签（三低池 / 排雷通过 / 全市场） */
+.scope-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(143, 170, 220, 0.2);
+}
+
+.scope-tab {
+  border: none;
+  background: transparent;
+  color: #b6c8e4;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.4rem 0.9rem;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.scope-tab:hover {
+  color: #eff5ff;
+}
+
+.scope-tab.active {
+  color: #0b1422;
+  background: #7fa6ff;
+}
+
 .diagnostic-card,
 .archive-card {
   padding: 18px;
