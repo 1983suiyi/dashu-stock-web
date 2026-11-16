@@ -19,6 +19,8 @@ import {
   summarizePortfolioIndustries,
 } from './lib/analytics'
 import {
+  MAX_GOODWILL_RATIO,
+  MAX_PLEDGE_RATIO,
   MAX_SCORE,
   PB_FLOOR_FAR_PCT,
   PB_FLOOR_NEAR_PCT,
@@ -440,6 +442,86 @@ const pbFloorTitle = (stock: ScoredStock) => {
   return `距行业 PB 底 +${stock.pbVsFloorPct.toFixed(1)}%（${stock.industry} PB 底 ${stock.industryPbFloor.toFixed(2)}）`
 }
 
+/** 扫雷三项的结构化结果：资产负债率、商誉、股权质押 */
+type RiskItem = {
+  key: 'debt' | 'goodwill' | 'pledge'
+  label: string
+  /** 右侧展示值，如「正常」「+4.0pp」「56.3%」 */
+  value: string
+  /** 阈值与口径说明 */
+  detail: string
+  /** true=触发硬过滤, false=通过, null=数据缺失 */
+  triggered: boolean | null
+}
+
+const getRiskItems = (stock: ScoredStock): RiskItem[] => {
+  const items: RiskItem[] = []
+
+  // 1. 资产负债率 vs 行业中位数宽容上限
+  if (stock.debtRatio !== null && stock.industryDebtMedianLimit !== null) {
+    const median = stock.industryDebtMedian ?? 0
+    const deviation = stock.debtRatio - median
+    items.push({
+      key: 'debt',
+      label: '资产负债率偏离同行业中位',
+      value:
+        stock.debtAboveIndustryMedian === true
+          ? `${deviation >= 0 ? '+' : ''}${deviation.toFixed(1)}pp`
+          : '正常',
+      detail: `本公司 ${stock.debtRatio.toFixed(1)}%，行业中位 ${median.toFixed(1)}%（宽容上限 ${stock.industryDebtMedianLimit.toFixed(1)}%）`,
+      triggered: stock.debtAboveIndustryMedian,
+    })
+  } else {
+    items.push({
+      key: 'debt',
+      label: '资产负债率偏离同行业中位',
+      value: '数据缺失',
+      detail: '资产负债率或行业中位数缺失，暂无法判定',
+      triggered: null,
+    })
+  }
+
+  // 2. 商誉占净资产
+  if (stock.goodwillRatio !== null) {
+    items.push({
+      key: 'goodwill',
+      label: '商誉 / 净资产',
+      value: `${stock.goodwillRatio.toFixed(1)}%`,
+      detail: `商誉占净资产比例，阈值 ${MAX_GOODWILL_RATIO}%`,
+      triggered: stock.goodwillRatio >= MAX_GOODWILL_RATIO,
+    })
+  } else {
+    items.push({
+      key: 'goodwill',
+      label: '商誉 / 净资产',
+      value: '数据缺失',
+      detail: `阈值 ${MAX_GOODWILL_RATIO}%`,
+      triggered: null,
+    })
+  }
+
+  // 3. 股权质押比例
+  if (stock.pledgeRatio !== null) {
+    items.push({
+      key: 'pledge',
+      label: '股权质押比例',
+      value: `${stock.pledgeRatio.toFixed(1)}%`,
+      detail: `全部股东质押合计 / 总股本，阈值 ${MAX_PLEDGE_RATIO}%`,
+      triggered: stock.pledgeRatio >= MAX_PLEDGE_RATIO,
+    })
+  } else {
+    items.push({
+      key: 'pledge',
+      label: '股权质押比例',
+      value: '数据缺失',
+      detail: `阈值 ${MAX_PLEDGE_RATIO}%`,
+      triggered: null,
+    })
+  }
+
+  return items
+}
+
 const normalize = (value: string) => value.trim().toLowerCase()
 const todayText = () => new Date().toISOString().slice(0, 10)
 
@@ -574,6 +656,7 @@ function App() {
   const [cycleSelectValue, setCycleSelectValue] = useState('')
   const [cycleOnlyCyclical, setCycleOnlyCyclical] = useState(true)
   const [cycleMinScore, setCycleMinScore] = useState(0)
+  const [cycleMinScoreInput, setCycleMinScoreInput] = useState('0')
   const [cycleSortKey, setCycleSortKey] = useState<CycleSortKey>('score')
   const [cycleSortDirection, setCycleSortDirection] = useState<SortDirection>('desc')
   const [selectedCycleIndustry, setSelectedCycleIndustry] = useState<string | null>(null)
@@ -2196,11 +2279,6 @@ function App() {
                 <span>PE {show(selectedStock.pe)}</span>
                 <span>现价 {show(selectedStock.price)}</span>
                 <span>扫雷宝 {selectedStock.mineScore}</span>
-                <span>
-                  资产负债率 {show(selectedStock.debtRatio, 1)} / 中位数{' '}
-                  {show(selectedStock.industryDebtMedian, 1)} / 上限{' '}
-                  {show(selectedStock.industryDebtMedianLimit, 1)}
-                </span>
                 <span>涨1 {gainView(selectedStock.gain1y, 0)}</span>
                 <span>涨3 {gainView(selectedStock.gain3y, 0)}</span>
                 <span>
@@ -2219,6 +2297,57 @@ function App() {
                 <span>一年内低点 {show(selectedStock.lowPrice1y)}</span>
                 <span>三年内低点 {show(selectedStock.lowPrice3y)}</span>
               </div>
+              {(() => {
+                const riskItems = getRiskItems(selectedStock)
+                const triggeredCount = riskItems.filter(
+                  (r) => r.triggered === true,
+                ).length
+                return (
+                  <div className="risk-panel">
+                    <div className="risk-panel-head">
+                      <strong>扫雷三项</strong>
+                      <span
+                        className={
+                          triggeredCount > 0
+                            ? 'risk-count danger'
+                            : 'risk-count ok'
+                        }
+                      >
+                        {triggeredCount > 0
+                          ? `${triggeredCount} 项触发，按规则暂时剔除`
+                          : '全部通过'}
+                      </span>
+                    </div>
+                    <div className="risk-items">
+                      {riskItems.map((item) => (
+                        <div
+                          key={item.key}
+                          className={`risk-item-row ${
+                            item.triggered === true
+                              ? 'is-danger'
+                              : item.triggered === false
+                                ? 'is-ok'
+                                : 'is-unknown'
+                          }`}
+                        >
+                          <span className="risk-icon" aria-hidden="true">
+                            {item.triggered === true
+                              ? '!'
+                              : item.triggered === false
+                                ? '✓'
+                                : '?'}
+                          </span>
+                          <div className="risk-item-body">
+                            <div className="risk-item-label">{item.label}</div>
+                            <div className="risk-item-detail">{item.detail}</div>
+                          </div>
+                          <span className="risk-item-value">{item.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
               <ul className="explain-list">
                 {stockDiagnosis.map((reason) => (
                   <li key={reason}>{reason}</li>
@@ -2349,6 +2478,26 @@ function App() {
                   </span>
                 </td>
                 <td className="risk-cell">
+                  <div className="risk-dots">
+                    {getRiskItems(stock).map((item) => (
+                      <span
+                        key={item.key}
+                        className={`risk-dot ${
+                          item.triggered === true
+                            ? 'is-danger'
+                            : item.triggered === false
+                              ? 'is-ok'
+                              : 'is-unknown'
+                        }`}
+                      >
+                        {item.key === 'debt'
+                          ? '债'
+                          : item.key === 'goodwill'
+                            ? '誉'
+                            : '质'}
+                      </span>
+                    ))}
+                  </div>
                   <div className="risk-popover">
                     <button
                       type="button"
@@ -2829,13 +2978,18 @@ function App() {
         <label className="inline-search">
           <span>最低周期评分</span>
           <input
-            type="number"
-            min={0}
-            max={100}
-            value={cycleMinScore}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={3}
+            value={cycleMinScoreInput}
             onChange={(event) => {
-              const next = Number(event.target.value)
-              setCycleMinScore(Number.isFinite(next) ? Math.min(100, Math.max(0, next)) : 0)
+              const digits = event.target.value.replace(/\D/g, '').slice(0, 3)
+              const normalized = digits.replace(/^0+(?=\d)/, '')
+              const next = normalized === '' ? 0 : Number(normalized)
+              const clamped = Math.min(100, next)
+              setCycleMinScoreInput(normalized === '' ? '' : String(clamped))
+              setCycleMinScore(clamped)
             }}
           />
         </label>
