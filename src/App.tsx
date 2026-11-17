@@ -17,6 +17,7 @@ import {
   scoreCyclicality,
 } from './lib/cycle'
 import { IndustryCycleChart } from './components/IndustryCycleChart'
+import { StockValuationChart } from './components/StockValuationChart'
 import {
   buildAiHighlights,
   explainStockExclusion,
@@ -51,6 +52,7 @@ import type {
   IndustryCycleResponse,
   ScoredStock,
   StockRecord,
+  StockValuationResponse,
   StrategyConfig,
 } from './types'
 import type { CyclicalityScore } from './lib/cycle'
@@ -755,6 +757,12 @@ function App() {
   const [cycleMinScoreInput, setCycleMinScoreInput] = useState('0')
   const [cycleSortKey, setCycleSortKey] = useState<CycleSortKey>('score')
   const [cycleSortDirection, setCycleSortDirection] = useState<SortDirection>('desc')
+  const [stockValuation, setStockValuation] =
+    useState<StockValuationResponse | null>(null)
+  const [stockValuationLoading, setStockValuationLoading] = useState(false)
+  const [stockValuationError, setStockValuationError] = useState<string | null>(
+    null,
+  )
   const [selectedCycleIndustry, setSelectedCycleIndustry] = useState<string | null>(null)
   const [capitalTypeInput, setCapitalTypeInput] = useState<CapitalEventType>('入金')
   const [capitalAmountInput, setCapitalAmountInput] = useState('')
@@ -1277,6 +1285,51 @@ function App() {
       .slice(0, 12)
   }, [scoredStocks, stockQuery])
   const selectedStock = searchedStocks[0] ?? null
+
+  // 选中个股变化时拉取该股 PE/PB 历史走势（服务端按 2018 至今季度采样）
+  const selectedStockCode = selectedStock?.code ?? null
+  useEffect(() => {
+    if (selectedStockCode === null) {
+      setStockValuation(null)
+      setStockValuationError(null)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      setStockValuationLoading(true)
+      setStockValuationError(null)
+      try {
+        const resp = await fetch(
+          `/api/stock-valuation?code=${encodeURIComponent(selectedStockCode)}`,
+        )
+        const contentType = resp.headers.get('content-type') ?? ''
+        if (!contentType.includes('application/json')) {
+          throw new Error('当前服务未提供个股估值历史接口，请重启应用服务后重试')
+        }
+        const data = (await resp.json()) as StockValuationResponse
+        if (cancelled) return
+        if (data.error) {
+          setStockValuation(null)
+          setStockValuationError(data.error)
+          return
+        }
+        setStockValuation(data)
+      } catch (error) {
+        if (!cancelled) {
+          setStockValuation(null)
+          setStockValuationError(
+            error instanceof Error ? error.message : '个股估值历史加载失败',
+          )
+        }
+      } finally {
+        if (!cancelled) setStockValuationLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedStockCode])
+
   const visibleIndustries = useMemo(() => {
     const keyword = normalize(industryQuery)
     if (!keyword) return industrySummaries
@@ -2661,6 +2714,64 @@ function App() {
                   </div>
                 )
               })()}
+              <div className="valuation-panel">
+                <div className="valuation-panel-head">
+                  <strong>PE / PB 历史走势</strong>
+                  <span>季度采样，虚线为历史最低 / 最高</span>
+                </div>
+                {stockValuationLoading ? (
+                  <p className="helper-text">估值历史加载中…</p>
+                ) : stockValuationError ? (
+                  <p className="helper-text">{stockValuationError}</p>
+                ) : stockValuation ? (
+                  <>
+                    <div className="valuation-charts">
+                      <StockValuationChart
+                        label="PE(TTM)"
+                        points={stockValuation.points.map((point) => ({
+                          date: point.date,
+                          value: point.pe,
+                        }))}
+                        current={stockValuation.current.pe}
+                        percentile={stockValuation.pePercentile}
+                        range={stockValuation.peRange}
+                      />
+                      <StockValuationChart
+                        label="PB(MRQ)"
+                        points={stockValuation.points.map((point) => ({
+                          date: point.date,
+                          value: point.pb,
+                        }))}
+                        current={stockValuation.current.pb}
+                        percentile={stockValuation.pbPercentile}
+                        range={stockValuation.pbRange}
+                      />
+                    </div>
+                    <div className="table-wrap">
+                      <table className="valuation-year-table">
+                        <thead>
+                          <tr>
+                            <th>年度末</th>
+                            <th>PE(TTM)</th>
+                            <th>PB(MRQ)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {stockValuation.yearEnd.map((row) => (
+                            <tr key={row.year}>
+                              <td>{row.year}</td>
+                              <td>{row.pe === null ? '—' : row.pe.toFixed(2)}</td>
+                              <td>{row.pb === null ? '—' : row.pb.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : (
+                  <p className="helper-text">暂无估值历史数据。</p>
+                )}
+              </div>
               <ul className="explain-list">
                 {stockDiagnosis.map((reason) => (
                   <li key={reason}>{reason}</li>

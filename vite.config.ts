@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { queryKline } from './server/kline.mjs'
 import { getIndustryCycle } from './server/industry-cycle.mjs'
+import { getStockValuation } from './server/stock-valuation.mjs'
 
 /**
  * 开发环境复用生产环境的接口逻辑，避免维护两份实现。
@@ -28,6 +29,18 @@ const klineApiPlugin = (): Plugin => ({
           .catch((error: unknown) =>
             sendJson(500, {
               error: `行业周期计算异常：${error instanceof Error ? error.message : String(error)}`,
+            }),
+          )
+        return
+      }
+
+      if (req.url.startsWith('/api/stock-valuation')) {
+        const url = new URL(req.url, 'http://localhost')
+        getStockValuation(url.searchParams.get('code') ?? '')
+          .then((payload) => sendJson(200, payload))
+          .catch((error: unknown) =>
+            sendJson(500, {
+              error: `个股估值历史异常：${error instanceof Error ? error.message : String(error)}`,
             }),
           )
         return

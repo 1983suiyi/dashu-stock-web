@@ -1253,6 +1253,190 @@ button:disabled {
   color: #f4f7ff;
 }
 
+/* 个股 PE/PB 历史走势 */
+.valuation-panel {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid rgba(143, 170, 220, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.valuation-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.valuation-panel-head strong {
+  color: #f4f7ff;
+}
+
+.valuation-panel-head span {
+  color: #91a7c6;
+  font-size: 0.85rem;
+}
+
+.valuation-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.valuation-chart {
+  position: relative;
+  padding: 12px;
+  border: 1px solid rgba(143, 170, 220, 0.12);
+  border-radius: 14px;
+  background: rgba(11, 20, 34, 0.45);
+}
+
+.valuation-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.valuation-chart-head strong {
+  color: #f4f7ff;
+  font-size: 0.98rem;
+}
+
+.valuation-current {
+  color: #dce6f6;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.valuation-percentile {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.valuation-percentile.low {
+  color: #9ef0bf;
+  background: rgba(49, 189, 108, 0.16);
+}
+
+.valuation-percentile.mid {
+  color: #ffd166;
+  background: rgba(255, 209, 102, 0.16);
+}
+
+.valuation-percentile.high {
+  color: #ff9c8f;
+  background: rgba(255, 96, 72, 0.2);
+}
+
+.valuation-percentile.muted {
+  color: #91a7c6;
+  background: rgba(143, 170, 220, 0.14);
+}
+
+.valuation-range {
+  margin-bottom: 6px;
+  color: #7f95b5;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.valuation-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.valuation-grid {
+  stroke: rgba(143, 170, 220, 0.12);
+  stroke-width: 1;
+}
+
+.valuation-axis {
+  fill: #7f95b5;
+  font-size: 11px;
+}
+
+.valuation-ref {
+  stroke-width: 1;
+  stroke-dasharray: 6 5;
+}
+
+.valuation-ref.low {
+  stroke: rgba(74, 222, 128, 0.55);
+}
+
+.valuation-ref.high {
+  stroke: rgba(248, 113, 113, 0.5);
+}
+
+.valuation-area {
+  fill: rgba(77, 141, 255, 0.14);
+  stroke: none;
+}
+
+.valuation-line {
+  fill: none;
+  stroke: #4d8dff;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.valuation-current-dot {
+  fill: #ffd166;
+  stroke: #0f1727;
+  stroke-width: 1.5;
+}
+
+.valuation-hover-line {
+  stroke: rgba(219, 230, 249, 0.45);
+  stroke-width: 1;
+}
+
+.valuation-hover-dot {
+  fill: #dce6f6;
+}
+
+.valuation-tooltip {
+  position: absolute;
+  padding: 5px 9px;
+  border: 1px solid rgba(143, 170, 220, 0.28);
+  border-radius: 10px;
+  background: rgba(9, 18, 31, 0.94);
+  color: #dce6f6;
+  font-size: 0.8rem;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.valuation-tooltip strong {
+  display: block;
+  color: #f4f7ff;
+}
+
+.valuation-year-table {
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.valuation-year-table td {
+  white-space: nowrap;
+}
+
+@media (max-width: 860px) {
+  .valuation-charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 1100px) {
   .workspace-shell,
   .hero,

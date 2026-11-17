@@ -77,6 +77,43 @@ export type MarketTemperatureRecord = {
   riskPassedCount: number
 }
 
+/** 个股 PE/PB 历史走势上的一个采样点 */
+export type StockValuationPoint = {
+  date: string
+  pe: number | null
+  pb: number | null
+}
+
+/** 个股各年度末估值 */
+export type StockValuationYearEnd = {
+  year: number
+  pe: number | null
+  pb: number | null
+}
+
+/** 个股 PE/PB 历史估值响应 */
+export type StockValuationResponse = {
+  code: string
+  name: string
+  /** 季度采样（每季度末）+ 最新交易日的走势点 */
+  points: StockValuationPoint[]
+  current: { date: string; pe: number | null; pb: number | null }
+  /** 当前 PE 在历史正估值样本中的分位（0~100） */
+  pePercentile: number | null
+  /** 当前 PB 在历史正估值样本中的分位（0~100） */
+  pbPercentile: number | null
+  peRange: { min: number | null; max: number | null }
+  pbRange: { min: number | null; max: number | null }
+  /** 各年度末估值，按年份升序 */
+  yearEnd: StockValuationYearEnd[]
+  /** 参与统计的日频样本数 */
+  samples: number
+  /** 服务端错误说明，存在时表示无数据 */
+  error?: string
+  cached?: boolean
+  timestamp?: number
+}
+
 export type StrategyConfig = {
   /** 历史折扣 PB。>=1 时估值区间下限为 1.0，<1 时按 0.618 + 折扣×0.382 收敛 */
   discount: number
