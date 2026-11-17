@@ -999,6 +999,21 @@ button:disabled {
   }
 }
 
+/* 市场温度表 */
+.market-temperature-table {
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-temperature-table td {
+  white-space: nowrap;
+}
+
+.market-temperature-table tbody tr:first-child td {
+  color: #eff5ff;
+  font-weight: 600;
+}
+
 .diagnostic-card,
 .archive-card {
   padding: 18px;

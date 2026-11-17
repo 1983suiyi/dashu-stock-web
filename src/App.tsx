@@ -44,6 +44,7 @@ import type {
   DataSourceMeta,
   IndexSnapshot,
   MarketSnapshot,
+  MarketTemperatureRecord,
   PortfolioHolding,
   KlineResult,
   CycleStats,
@@ -201,6 +202,7 @@ const MARKET_CACHE_KEY = 'dashu-market-cache'
 /** 当天已补齐的 K 线结果，按代码增量保存，避免重复请求 */
 const DAILY_KLINE_CACHE_KEY = 'dashu-daily-kline-cache'
 const INDEX_CACHE_KEY = 'dashu-index-snapshot'
+const MARKET_TEMPERATURE_CACHE_KEY = 'dashu-market-temperature'
 
 const navItems: Array<{ key: WorkspaceView; label: string }> = [
   { key: 'overview', label: '市场概况' },
@@ -654,6 +656,41 @@ const saveIndexCache = (cache: IndexCache) => {
     // 缓存失败不影响主流程
   }
 }
+
+/** 读取每日市场温度记录（按日期倒序，最多保留 240 个交易日） */
+const loadMarketTemperature = (): MarketTemperatureRecord[] => {
+  try {
+    const raw = localStorage.getItem(MARKET_TEMPERATURE_CACHE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as MarketTemperatureRecord[]
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 按日期写入/覆盖当日温度记录并倒序保存。
+ * 内容与已有当日记录完全一致时返回原数组，避免无谓的重渲染。
+ */
+const upsertMarketTemperature = (
+  records: MarketTemperatureRecord[],
+  record: MarketTemperatureRecord,
+): MarketTemperatureRecord[] => {
+  const existing = records.find((item) => item.date === record.date)
+  if (existing && JSON.stringify(existing) === JSON.stringify(record)) {
+    return records
+  }
+  const next = [record, ...records.filter((item) => item.date !== record.date)]
+    .sort((a, b) => (a.date < b.date ? 1 : -1))
+    .slice(0, 240)
+  try {
+    localStorage.setItem(MARKET_TEMPERATURE_CACHE_KEY, JSON.stringify(next))
+  } catch {
+    // 缓存失败不影响主流程
+  }
+  return next
+}
 const currency = (value: number | null, digits = 0) =>
   value === null ? '—' : value.toFixed(digits)
 const signedCapitalAmount = (event: Pick<CapitalEvent, 'type' | 'amount'>) =>
@@ -675,6 +712,9 @@ function App() {
   const [warning, setWarning] = useState('')
   const [dataMeta, setDataMeta] = useState<DataSourceMeta | null>(null)
   const [indexSnapshot, setIndexSnapshot] = useState<IndexSnapshot | null>(null)
+  const [marketTemperature, setMarketTemperature] = useState<
+    MarketTemperatureRecord[]
+  >(() => loadMarketTemperature())
   const [indexLoading, setIndexLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
@@ -1008,6 +1048,31 @@ function App() {
     indexBandIndex >= 0 ? INDEX_POSITION_BANDS[indexBandIndex + 1] ?? null : null
   const upperIndexBand =
     indexBandIndex > 0 ? INDEX_POSITION_BANDS[indexBandIndex - 1] : null
+
+  /** 当日市场温度：把关键指标固化成一行，按日期累积留存 */
+  const todayTemperature = useMemo<MarketTemperatureRecord>(
+    () => ({
+      date: todayText(),
+      indexLevel: indexSnapshot?.price ?? null,
+      exposurePct: indexBand?.maxPct ?? null,
+      pbMedian: market.allMarketPb > 0 ? market.allMarketPb : null,
+      peMedian: market.allMarketPe > 0 ? market.allMarketPe : null,
+      belowNetCount: scoredStocks.filter(
+        (stock) => stock.pb !== null && stock.pb > 0 && stock.pb < 1,
+      ).length,
+      threeLowCount: eligibleStocks.length,
+      riskPassedCount: scoredStocks.filter((stock) => riskPassed(stock)).length,
+    }),
+    [scoredStocks, eligibleStocks, market, indexSnapshot, indexBand],
+  )
+
+  // 有全市场数据时，按日期写入/覆盖当日温度记录
+  useEffect(() => {
+    if (stocks.length === 0) return
+    setMarketTemperature((prev) =>
+      upsertMarketTemperature(prev, todayTemperature),
+    )
+  }, [stocks.length, todayTemperature])
   const industrySummaries = useMemo(
     () => summarizeIndustries(scoredStocks, historicalPbFloors ?? undefined),
     [scoredStocks, historicalPbFloors],
@@ -2217,6 +2282,53 @@ function App() {
             </table>
           </div>
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-title">
+          <h2>市场温度</h2>
+          <p>
+            每个交易日自动留存一行当日市场位置（上证点位、建议仓位、PE/PB
+            中位数、破净家数、三低命中与排雷通过家数），最新记录在最上方，便于对比市场冷热变化。
+            数据保存在本地浏览器，最多保留近 240 个交易日。
+          </p>
+        </div>
+        {marketTemperature.length === 0 ? (
+          <p className="helper-text">暂无记录，拉取全市场数据后会自动写入当日温度。</p>
+        ) : (
+          <div className="table-wrap sticky-head">
+            <table className="market-temperature-table">
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>上证</th>
+                  <th>建议仓位</th>
+                  <th>PE 中位</th>
+                  <th>PB 中位</th>
+                  <th>破净数</th>
+                  <th>三低命中</th>
+                  <th>排雷通过</th>
+                </tr>
+              </thead>
+              <tbody>
+                {marketTemperature.map((record) => (
+                  <tr key={record.date}>
+                    <td>{record.date}</td>
+                    <td>{record.indexLevel?.toFixed(2) ?? '—'}</td>
+                    <td>
+                      {record.exposurePct !== null ? `${record.exposurePct}%` : '—'}
+                    </td>
+                    <td>{record.peMedian?.toFixed(2) ?? '—'}</td>
+                    <td>{record.pbMedian?.toFixed(2) ?? '—'}</td>
+                    <td>{record.belowNetCount}</td>
+                    <td>{record.threeLowCount}</td>
+                    <td>{record.riskPassedCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="panel">

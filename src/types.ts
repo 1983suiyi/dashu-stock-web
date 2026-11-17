@@ -57,6 +57,26 @@ export type IndexSnapshot = {
   low1y: number | null
 }
 
+/** 每日市场温度：把当日关键指标按日期留存，便于回看市场位置变化 */
+export type MarketTemperatureRecord = {
+  /** 记录日期，形如 2026-11-17 */
+  date: string
+  /** 当日上证指数点位 */
+  indexLevel: number | null
+  /** 按上证点位推算的建议仓位上限（百分比） */
+  exposurePct: number | null
+  /** 全市场 PB 中位数 */
+  pbMedian: number | null
+  /** 全市场 PE 中位数 */
+  peMedian: number | null
+  /** 破净股数量（PB 介于 0~1） */
+  belowNetCount: number
+  /** 命中三低（通过筛选）的股票数 */
+  threeLowCount: number
+  /** 扫雷全部通过的股票数 */
+  riskPassedCount: number
+}
+
 export type StrategyConfig = {
   /** 历史折扣 PB。>=1 时估值区间下限为 1.0，<1 时按 0.618 + 折扣×0.382 收敛 */
   discount: number
