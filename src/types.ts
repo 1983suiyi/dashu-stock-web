@@ -35,6 +35,28 @@ export type MarketSnapshot = {
   allMarketPe: number
 }
 
+/** 上证指数点位对应建议仓位的分档 */
+export type IndexPositionBand = {
+  /** 区间下沿（含），-Infinity 表示最低档 */
+  floor: number
+  /** 展示用区间标签，如「3600 – 3700」 */
+  label: string
+  /** 建议仓位下限（百分比，0~100） */
+  minPct: number
+  /** 建议仓位上限（百分比，0~100） */
+  maxPct: number
+}
+
+/** 上证指数快照（按点位定仓位的输入） */
+export type IndexSnapshot = {
+  /** 当前点位 */
+  price: number | null
+  /** 近一年最高点位 */
+  high1y: number | null
+  /** 近一年最低点位 */
+  low1y: number | null
+}
+
 export type StrategyConfig = {
   /** 历史折扣 PB。>=1 时估值区间下限为 1.0，<1 时按 0.618 + 折扣×0.382 收敛 */
   discount: number

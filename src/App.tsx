@@ -3,7 +3,12 @@ import { defaultConfig, defaultMarketSnapshot, demoStocks } from './data/stocks'
 import { downloadCsv, toCsv } from './lib/csv'
 import { fetchRealMarketData, fetchStockByCode } from './lib/eastmoney'
 import { normalizeIndustry } from './lib/industry'
-import { applyKline, fetchKlines, toSymbol } from './lib/kline'
+import {
+  applyKline,
+  fetchIndexSnapshot,
+  fetchKlines,
+  toSymbol,
+} from './lib/kline'
 import {
   CYCLICAL_STRONG_THRESHOLD,
   classifyCyclical,
@@ -19,6 +24,7 @@ import {
   summarizePortfolioIndustries,
 } from './lib/analytics'
 import {
+  INDEX_POSITION_BANDS,
   MAX_GOODWILL_RATIO,
   MAX_PLEDGE_RATIO,
   MAX_SCORE,
@@ -27,6 +33,7 @@ import {
   deriveMarketSnapshot,
   pbBand,
   peBand,
+  pickIndexPositionBand,
   pickKlineCandidates,
   portfolioExposure,
   recommendPortfolio,
@@ -35,6 +42,7 @@ import {
 } from './lib/strategy'
 import type {
   DataSourceMeta,
+  IndexSnapshot,
   MarketSnapshot,
   PortfolioHolding,
   KlineResult,
@@ -192,6 +200,7 @@ const CAPITAL_EVENTS_STORAGE_KEY = 'dashu-capital-events'
 const MARKET_CACHE_KEY = 'dashu-market-cache'
 /** 当天已补齐的 K 线结果，按代码增量保存，避免重复请求 */
 const DAILY_KLINE_CACHE_KEY = 'dashu-daily-kline-cache'
+const INDEX_CACHE_KEY = 'dashu-index-snapshot'
 
 const navItems: Array<{ key: WorkspaceView; label: string }> = [
   { key: 'overview', label: '市场概况' },
@@ -619,6 +628,32 @@ const saveMarketCache = (cache: MarketCache) => {
     // localStorage 超限（全市场数据可能较大），忽略，下次刷新会重新拉取
   }
 }
+
+/** 上证指数快照缓存结构 */
+type IndexCache = {
+  date: string
+  snapshot: IndexSnapshot
+}
+
+const loadIndexCache = (): IndexCache | null => {
+  try {
+    const raw = localStorage.getItem(INDEX_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as IndexCache
+    if (parsed.date !== todayText() || !parsed.snapshot) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+const saveIndexCache = (cache: IndexCache) => {
+  try {
+    localStorage.setItem(INDEX_CACHE_KEY, JSON.stringify(cache))
+  } catch {
+    // 缓存失败不影响主流程
+  }
+}
 const currency = (value: number | null, digits = 0) =>
   value === null ? '—' : value.toFixed(digits)
 const signedCapitalAmount = (event: Pick<CapitalEvent, 'type' | 'amount'>) =>
@@ -639,12 +674,15 @@ function App() {
   const [message, setMessage] = useState('当前使用内置演示数据。')
   const [warning, setWarning] = useState('')
   const [dataMeta, setDataMeta] = useState<DataSourceMeta | null>(null)
+  const [indexSnapshot, setIndexSnapshot] = useState<IndexSnapshot | null>(null)
+  const [indexLoading, setIndexLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
   const [fullKlineCompleted, setFullKlineCompleted] = useState(false)
   const [scoreScope, setScoreScope] = useState<ScoreScope>('all')
   const [excludeFinancial, setExcludeFinancial] = useState(false)
   const [onlyNearPbFloor, setOnlyNearPbFloor] = useState(false)
+  const [scoreQuery, setScoreQuery] = useState('')
   const [queryingHighCode, setQueryingHighCode] = useState<string | null>(null)
   const lastAutoHighQueryRef = useRef<string | null>(null)
   const [scoreSortKey, setScoreSortKey] = useState<ScoreSortKey | null>(null)
@@ -960,6 +998,16 @@ function App() {
   }, [estimatedHoldingMarketValue, knownHoldingWeight, holdingDetails])
   const marketSummary = useMemo(() => summarizeMarket(market), [market])
   const exposure = useMemo(() => portfolioExposure(portfolio), [portfolio])
+  const indexBand = useMemo(
+    () => pickIndexPositionBand(indexSnapshot?.price ?? null),
+    [indexSnapshot],
+  )
+  // 档位相邻关系：bands 按点位从高到低排列，index+1 为更低点位（仓位更重）
+  const indexBandIndex = indexBand ? INDEX_POSITION_BANDS.indexOf(indexBand) : -1
+  const lowerIndexBand =
+    indexBandIndex >= 0 ? INDEX_POSITION_BANDS[indexBandIndex + 1] ?? null : null
+  const upperIndexBand =
+    indexBandIndex > 0 ? INDEX_POSITION_BANDS[indexBandIndex - 1] : null
   const industrySummaries = useMemo(
     () => summarizeIndustries(scoredStocks, historicalPbFloors ?? undefined),
     [scoredStocks, historicalPbFloors],
@@ -997,20 +1045,24 @@ function App() {
         }),
     )
   }, [config.klineDays, fullKlineCompleted, stocks])
-  const visibleStocks = useMemo(
-    () =>
-      scoredStocks.filter(
-        (stock) =>
-          (!excludeFinancial || !isFinancialStock(stock)) &&
-          (scoreScope === 'all' ||
-            (scoreScope === 'eligible' && stock.eligible) ||
-            (scoreScope === 'riskPassed' && riskPassed(stock))) &&
-          (!onlyNearPbFloor ||
-            (stock.pbVsFloorPct !== null &&
-              stock.pbVsFloorPct <= PB_FLOOR_NEAR_PCT)),
-      ),
-    [scoredStocks, scoreScope, excludeFinancial, onlyNearPbFloor],
-  )
+  const visibleStocks = useMemo(() => {
+    const keyword = normalize(scoreQuery)
+    return scoredStocks.filter(
+      (stock) =>
+        (!excludeFinancial || !isFinancialStock(stock)) &&
+        (scoreScope === 'all' ||
+          (scoreScope === 'eligible' && stock.eligible) ||
+          (scoreScope === 'riskPassed' && riskPassed(stock))) &&
+        (!onlyNearPbFloor ||
+          (stock.pbVsFloorPct !== null &&
+            stock.pbVsFloorPct <= PB_FLOOR_NEAR_PCT)) &&
+        (!keyword ||
+          stock.code.includes(keyword) ||
+          normalize(stock.name).includes(keyword) ||
+          normalize(stock.industry).includes(keyword) ||
+          normalize(stock.sector).includes(keyword)),
+    )
+  }, [scoredStocks, scoreScope, excludeFinancial, onlyNearPbFloor, scoreQuery])
 
   /** 按当前列与方向排序；未选择列时保持原始顺序，空值始终排在最后 */
   const sortedVisibleStocks = useMemo(() => {
@@ -1322,6 +1374,25 @@ function App() {
     }
   }
 
+  // 拉取上证指数快照：复用 /api/kline 代理，返回当前点位与近一年高低
+  const refreshIndexSnapshot = async (): Promise<boolean> => {
+    setIndexLoading(true)
+    try {
+      const entry = await fetchIndexSnapshot()
+      if (!entry || entry.lastClose === null) return false
+      const snapshot: IndexSnapshot = {
+        price: entry.lastClose,
+        high1y: entry.high1y,
+        low1y: entry.low1y,
+      }
+      setIndexSnapshot(snapshot)
+      saveIndexCache({ date: todayText(), snapshot })
+      return true
+    } finally {
+      setIndexLoading(false)
+    }
+  }
+
   const handleFetchAll = async () => {
     setLoading(true)
     setWarning('')
@@ -1332,6 +1403,8 @@ function App() {
       const derivedMarket = deriveMarketSnapshot(enriched)
       setStocks(enriched)
       setMarket(derivedMarket)
+      // 同步刷新上证指数点位，供「按点位定仓位」模块使用
+      void refreshIndexSnapshot()
       setDataMeta({ ...meta, klineCount: count })
       setFullKlineCompleted(
         loadDailyKlineCache(config.klineDays)?.completed ?? false,
@@ -1392,6 +1465,18 @@ function App() {
       return
     }
     void fetchAllRef.current()
+  }, [])
+
+  // 挂载时：上证指数快照当天有缓存直接用，否则拉取一次
+  const indexFetchRef = useRef<() => Promise<boolean>>(async () => false)
+  indexFetchRef.current = refreshIndexSnapshot
+  useEffect(() => {
+    const cached = loadIndexCache()
+    if (cached) {
+      setIndexSnapshot(cached.snapshot)
+      return
+    }
+    void indexFetchRef.current()
   }, [])
 
   const handleFillKline = async () => {
@@ -2039,6 +2124,101 @@ function App() {
         </div>
       </header>
 
+      <section className="panel index-position-panel">
+        <div className="section-title">
+          <h2>上证点位定仓位</h2>
+          <p>
+            大数投资「按点位定仓位」：越跌仓位越重，只应对不预测。下标按上证指数每
+            100 点一档给出建议权益仓位，并高亮当前所在档位，作为整体仓位的参考刻度。
+          </p>
+        </div>
+
+        <div className="index-position-body">
+          <div className="index-position-summary">
+            <div className="metric-card accent">
+              <span>上证指数</span>
+              <strong>
+                {indexSnapshot?.price != null
+                  ? indexSnapshot.price.toFixed(2)
+                  : indexLoading
+                    ? '加载中…'
+                    : '—'}
+              </strong>
+              <p>
+                {indexBand
+                  ? `落在 ${indexBand.label} 档，理论上限仓位 ${indexBand.maxPct}%。` +
+                    (lowerIndexBand
+                      ? ` 若继续跌至 ${lowerIndexBand.label} 区间，仓位上限可提高到 ${lowerIndexBand.maxPct}%；`
+                      : ' ') +
+                    (upperIndexBand
+                      ? `反之反弹至 ${upperIndexBand.label} 区间应减回 ${upperIndexBand.maxPct}%。`
+                      : '')
+                  : '暂无上证指数数据，请点击「刷新指数」或「拉取最新数据」。'}
+              </p>
+            </div>
+
+            <div className="metric-grid">
+              <div className="metric-card">
+                <span>当前档位</span>
+                <strong>{indexBand ? indexBand.label : '—'}</strong>
+              </div>
+              <div className="metric-card">
+                <span>按点位建议仓位</span>
+                <strong>
+                  {indexBand
+                    ? indexBand.minPct === indexBand.maxPct
+                      ? `${indexBand.maxPct}%`
+                      : `${indexBand.minPct}% – ${indexBand.maxPct}%`
+                    : '—'}
+                </strong>
+              </div>
+              <div className="metric-card">
+                <span>近一年高</span>
+                <strong>{indexSnapshot?.high1y?.toFixed(0) ?? '—'}</strong>
+              </div>
+              <div className="metric-card">
+                <span>近一年低</span>
+                <strong>{indexSnapshot?.low1y?.toFixed(0) ?? '—'}</strong>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void refreshIndexSnapshot()}
+              disabled={indexLoading}
+            >
+              {indexLoading ? '刷新中…' : '刷新指数'}
+            </button>
+          </div>
+
+          <div className="table-wrap sticky-head index-position-table-wrap">
+            <table className="index-position-table">
+              <thead>
+                <tr>
+                  <th>上证指数区间</th>
+                  <th>建议投资比例</th>
+                </tr>
+              </thead>
+              <tbody>
+                {INDEX_POSITION_BANDS.map((band) => (
+                  <tr
+                    key={band.label}
+                    className={band === indexBand ? 'active' : undefined}
+                  >
+                    <td>{band.label}</td>
+                    <td>
+                      {band.minPct === band.maxPct
+                        ? `${band.maxPct}%`
+                        : `${band.minPct}% – ${band.maxPct}%`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <section className="panel">
         <div className="section-title">
           <h2>数据与导出</h2>
@@ -2453,6 +2633,21 @@ function App() {
           />
           只看接近 PB 底（≤{PB_FLOOR_NEAR_PCT}%）
         </label>
+        <input
+          className="score-search"
+          value={scoreQuery}
+          onChange={(event) => setScoreQuery(event.target.value)}
+          placeholder="搜索代码 / 名称 / 行业"
+        />
+        {scoreQuery && (
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => setScoreQuery('')}
+          >
+            清除
+          </button>
+        )}
         <span className="helper-text">共 {visibleStocks.length} 条</span>
       </div>
 

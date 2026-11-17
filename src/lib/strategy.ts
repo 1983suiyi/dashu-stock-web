@@ -1,4 +1,5 @@
 import type {
+  IndexPositionBand,
   MarketSnapshot,
   PortfolioHolding,
   ScoredStock,
@@ -385,6 +386,47 @@ export const summarizeMarket = (market: MarketSnapshot) => {
     tone: '停止扩张仓位',
     description: '仅做换仓与风险管理，避免在整体估值过高时新增大额仓位。',
   }
+}
+
+/**
+ * 上证指数点位 → 建议权益仓位分档表。
+ * 越跌仓位越重：4100 点以上空仓，2100 点以下满仓，每 100 点一档，仓位上限线性上升 5%。
+ * 作为大数投资「按点位定仓位」的参考刻度，与全市场 PB 口径互为印证。
+ */
+const buildIndexPositionBands = (): IndexPositionBand[] => {
+  const topFloor = 4100
+  const bottomFloor = 2100
+  const bands: IndexPositionBand[] = [
+    { floor: topFloor, label: `${topFloor} 以上`, minPct: 0, maxPct: 0 },
+  ]
+  for (let floor = topFloor - 100; floor >= bottomFloor; floor -= 100) {
+    const maxPct = Math.round(
+      ((topFloor - floor) / (topFloor - bottomFloor)) * 100,
+    )
+    bands.push({
+      floor,
+      label: `${floor} – ${floor + 100}`,
+      minPct: Math.max(maxPct - 5, 0),
+      maxPct,
+    })
+  }
+  bands.push({
+    floor: Number.NEGATIVE_INFINITY,
+    label: `${bottomFloor} 以下`,
+    minPct: 100,
+    maxPct: 100,
+  })
+  return bands
+}
+
+export const INDEX_POSITION_BANDS = buildIndexPositionBands()
+
+/** 返回点位落入的仓位档位；点位无效时返回 null */
+export const pickIndexPositionBand = (
+  level: number | null,
+): IndexPositionBand | null => {
+  if (level === null || !Number.isFinite(level)) return null
+  return INDEX_POSITION_BANDS.find((band) => level >= band.floor) ?? null
 }
 
 /** 用全市场样本中位数估算整体估值水平，避免依赖单一指数口径 */

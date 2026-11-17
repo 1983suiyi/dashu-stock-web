@@ -919,6 +919,86 @@ button:disabled {
   background: #7fa6ff;
 }
 
+/* 大数评分表：搜索框 */
+.score-search {
+  flex: 1 1 180px;
+  min-width: 160px;
+  max-width: 320px;
+  padding: 0.5rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid rgba(143, 170, 220, 0.3);
+  background: rgba(11, 20, 34, 0.6);
+  color: #eff5ff;
+  font-size: 0.9rem;
+}
+
+.score-search::placeholder {
+  color: #6c82a6;
+}
+
+.score-search:focus {
+  outline: none;
+  border-color: rgba(127, 166, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(127, 166, 255, 0.18);
+}
+
+/* 通用轻量链接式按钮 */
+.link-button {
+  background: none;
+  border: none;
+  color: #7fa6ff;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.link-button:hover {
+  color: #a9c2ff;
+  text-decoration: underline;
+}
+
+/* 上证点位定仓位：左侧摘要 + 右侧分档表 */
+.index-position-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  gap: 16px;
+  align-items: start;
+}
+
+.index-position-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.index-position-table-wrap {
+  max-height: 420px;
+}
+
+.index-position-table {
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.index-position-table td {
+  white-space: nowrap;
+}
+
+.index-position-table tbody tr.active {
+  background: rgba(127, 166, 255, 0.16);
+}
+
+.index-position-table tbody tr.active td {
+  color: #eff5ff;
+  font-weight: 600;
+}
+
+@media (max-width: 860px) {
+  .index-position-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .diagnostic-card,
 .archive-card {
   padding: 18px;
