@@ -32,6 +32,7 @@ import {
   PB_FLOOR_FAR_PCT,
   PB_FLOOR_NEAR_PCT,
   deriveMarketSnapshot,
+  matchesTripleLow,
   pbBand,
   peBand,
   pickIndexPositionBand,
@@ -40,7 +41,9 @@ import {
   recommendPortfolio,
   scoreStocks,
   summarizeMarket,
+  TRIPLE_LOW_PRESETS,
 } from './lib/strategy'
+import type { TripleLowTier } from './lib/strategy'
 import type {
   DataSourceMeta,
   IndexSnapshot,
@@ -724,6 +727,7 @@ function App() {
   const [scoreScope, setScoreScope] = useState<ScoreScope>('all')
   const [excludeFinancial, setExcludeFinancial] = useState(false)
   const [onlyNearPbFloor, setOnlyNearPbFloor] = useState(false)
+  const [tripleLowTier, setTripleLowTier] = useState<TripleLowTier>('off')
   const [scoreQuery, setScoreQuery] = useState('')
   const [queryingHighCode, setQueryingHighCode] = useState<string | null>(null)
   const lastAutoHighQueryRef = useRef<string | null>(null)
@@ -1129,13 +1133,14 @@ function App() {
         (!onlyNearPbFloor ||
           (stock.pbVsFloorPct !== null &&
             stock.pbVsFloorPct <= PB_FLOOR_NEAR_PCT)) &&
+        matchesTripleLow(stock, tripleLowTier) &&
         (!keyword ||
           stock.code.includes(keyword) ||
           normalize(stock.name).includes(keyword) ||
           normalize(stock.industry).includes(keyword) ||
           normalize(stock.sector).includes(keyword)),
     )
-  }, [scoredStocks, scoreScope, excludeFinancial, onlyNearPbFloor, scoreQuery])
+  }, [scoredStocks, scoreScope, excludeFinancial, onlyNearPbFloor, tripleLowTier, scoreQuery])
 
   /** 按当前列与方向排序；未选择列时保持原始顺序，空值始终排在最后 */
   const sortedVisibleStocks = useMemo(() => {
@@ -2856,6 +2861,20 @@ function App() {
           />
           只看接近 PB 底（≤{PB_FLOOR_NEAR_PCT}%）
         </label>
+        <label className="inline-select">
+          <span>三低档位</span>
+          <select
+            value={tripleLowTier}
+            onChange={(event) =>
+              setTripleLowTier(event.target.value as TripleLowTier)
+            }
+          >
+            <option value="off">不限</option>
+            <option value="loose">{TRIPLE_LOW_PRESETS.loose.label}</option>
+            <option value="standard">{TRIPLE_LOW_PRESETS.standard.label}</option>
+            <option value="strict">{TRIPLE_LOW_PRESETS.strict.label}</option>
+          </select>
+        </label>
         <input
           className="score-search"
           value={scoreQuery}
@@ -3423,7 +3442,7 @@ function App() {
         <h2>周期行业</h2>
         <p>
           先按预置的经典周期行业清单命中，再用行业 PB 月度序列的振幅与波动强度补足评分；
-          右侧（下方）曲线为该行业 2014 年至今的市值加权 PB（虚线为中位数），
+          右侧（下方）曲线为该行业 2018 年至今的市值加权 PB（虚线为中位数），
           并标注历史高低点与当前所处分位。
         </p>
       </div>

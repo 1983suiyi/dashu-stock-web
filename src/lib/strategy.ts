@@ -359,6 +359,32 @@ export const recommendPortfolio = (
 export const portfolioExposure = (portfolio: PortfolioHolding[]) =>
   portfolio.reduce((sum, item) => sum + item.targetWeight, 0)
 
+/**
+ * 三低档位：PB / PE / 距一年低点涨幅三项阈值的预设档。
+ * 「距一年低点」用现价相对一年内最低价的涨幅衡量，越接近 0 越贴近底部。
+ */
+export type TripleLowTier = 'off' | 'loose' | 'standard' | 'strict'
+
+export const TRIPLE_LOW_PRESETS: Record<
+  Exclude<TripleLowTier, 'off'>,
+  { label: string; pbMax: number; peMax: number; lowGapMax: number }
+> = {
+  loose: { label: '宽松（PB≤1.2 / PE≤12 / 距低点≤10%）', pbMax: 1.2, peMax: 12, lowGapMax: 0.1 },
+  standard: { label: '标准（PB≤1.0 / PE≤10 / 距低点≤5%）', pbMax: 1.0, peMax: 10, lowGapMax: 0.05 },
+  strict: { label: '严格（PB≤0.8 / PE≤8 / 距低点≤3%）', pbMax: 0.8, peMax: 8, lowGapMax: 0.03 },
+}
+
+/** 三低筛选：PB、PE 与「现价距一年低点涨幅」需同时满足档位阈值；缺任一项视为不通过。 */
+export const matchesTripleLow = (stock: ScoredStock, tier: TripleLowTier) => {
+  if (tier === 'off') return true
+  const preset = TRIPLE_LOW_PRESETS[tier]
+  const { pb, pe, gain1y } = stock
+  if (pb === null || pb <= 0 || pe === null || pe <= 0 || gain1y === null) {
+    return false
+  }
+  return pb <= preset.pbMax && pe <= preset.peMax && gain1y <= preset.lowGapMax
+}
+
 export const summarizeMarket = (market: MarketSnapshot) => {
   if (market.allMarketPb <= 1.5) {
     return {
