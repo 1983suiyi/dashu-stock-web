@@ -1,4 +1,5 @@
 import type {
+  IndexPositionBand,
   MarketSnapshot,
   PortfolioHolding,
   ScoredStock,
@@ -24,6 +25,9 @@ export const MAX_SCORE = 300
 /** 公开口径的高风险兜底：先用最明显的两类财务/股权风险做硬过滤。 */
 export const MAX_GOODWILL_RATIO = 20
 export const MAX_PLEDGE_RATIO = 20
+/** 个股 PB 相对「行业 PB 底」的偏离分档(%)：≤10% 视为贴近底部，≥20% 视为明显偏离 */
+export const PB_FLOOR_NEAR_PCT = 10
+export const PB_FLOOR_FAR_PCT = 20
 
 /** 原始实现的线性映射：v>=hi 记 0，v<=lo 记 1（即满分） */
 const bta = (lo: number, hi: number, value: number) => {
@@ -117,13 +121,62 @@ export const industryDebtMedians = (stocks: StockRecord[]) => {
   return result
 }
 
+/**
+ * 各行业「PB 底」。
+ *
+ * 优先使用服务端按「大数模拟器」口径计算的历史统计 PB 底
+ * （行业内个股 PB 分布第 5 百分位数的历史最低值，按 BOARD_NAME 索引）。
+ * 若未提供历史数据，则回退到当前截面最低正 PB（保守兜底）。
+ *
+ * 同一标准化行业可能对应多个 BOARD_NAME（如「食品加工制造」来自
+ * 「调味发酵品Ⅱ」和「食品加工」），此时取所有来源 BOARD_NAME 中
+ * 最低的 PB 底作为该行业的 PB 底。
+ */
+export const industryPbFloors = (
+  stocks: StockRecord[],
+  historicalFloors?: Record<string, number>,
+): Map<string, number> => {
+  const grouped = new Map<string, number>()
+
+  if (historicalFloors) {
+    // 按标准化行业聚合，取所有来源 BOARD_NAME 的最低 PB 底
+    const byIndustry = new Map<string, number[]>()
+    for (const stock of stocks) {
+      const source = stock.sourceIndustry
+      if (!source) continue
+      const floor = historicalFloors[source]
+      if (floor === undefined || floor <= 0) continue
+      const list = byIndustry.get(stock.industry) ?? []
+      list.push(floor)
+      byIndustry.set(stock.industry, list)
+    }
+    for (const [industry, floors] of byIndustry) {
+      grouped.set(industry, Math.min(...floors))
+    }
+    if (grouped.size > 0) return grouped
+  }
+
+  // 回退：当前截面最低正 PB
+  for (const stock of stocks) {
+    if (stock.pb === null || stock.pb <= 0) continue
+    const current = grouped.get(stock.industry)
+    if (current === undefined || stock.pb < current) {
+      grouped.set(stock.industry, stock.pb)
+    }
+  }
+  return grouped
+}
+
 export const scoreStocks = (
   stocks: StockRecord[],
   config: StrategyConfig,
+  historicalPbFloors?: Record<string, number>,
+  historicalStockPbFloors?: Record<string, number>,
 ): ScoredStock[] => {
   const [pbLo, pbHi] = pbBand(config.discount)
   const [peLo, peHi] = peBand(config.discount)
   const debtMedians = industryDebtMedians(stocks)
+  const pbFloors = industryPbFloors(stocks, historicalPbFloors)
 
   return stocks
     .map<ScoredStock>((stock) => {
@@ -152,6 +205,19 @@ export const scoreStocks = (
       const winProbability = complete ? totalScore / 3 : null
 
       const industryDebtMedian = debtMedians.get(stock.industry) ?? null
+      const industryPbFloor = pbFloors.get(stock.industry) ?? null
+      const historicalStockPbFloor = historicalStockPbFloors?.[stock.code] ?? null
+      // Monthly snapshots can miss a newer intramonth low; include the current PB as an observation.
+      const stockPbFloor =
+        stock.pb !== null && stock.pb > 0
+          ? historicalStockPbFloor === null
+            ? stock.pb
+            : Math.min(historicalStockPbFloor, stock.pb)
+          : historicalStockPbFloor
+      const pbVsFloorPct =
+        stock.pb !== null && stock.pb > 0 && industryPbFloor !== null && industryPbFloor > 0
+          ? (stock.pb / industryPbFloor - 1) * 100
+          : null
       const industryDebtMedianLimit =
         industryDebtMedian === null
           ? null
@@ -181,6 +247,11 @@ export const scoreStocks = (
         notes.push('股息率低于阈值')
       }
       if (stock.isST) notes.push('ST 风险')
+      if (pbVsFloorPct !== null) {
+        notes.push(
+          `距行业 PB 底 ${pbVsFloorPct.toFixed(1)}%（PB 底 ${industryPbFloor?.toFixed(2)}）`,
+        )
+      }
 
       const eligible =
         !stock.isST &&
@@ -206,6 +277,9 @@ export const scoreStocks = (
         peBand: [peLo, peHi],
         industryDebtMedian,
         industryDebtMedianLimit,
+        industryPbFloor,
+        stockPbFloor,
+        pbVsFloorPct,
         debtAboveIndustryMedian,
         eligible,
         notes,
@@ -285,6 +359,32 @@ export const recommendPortfolio = (
 export const portfolioExposure = (portfolio: PortfolioHolding[]) =>
   portfolio.reduce((sum, item) => sum + item.targetWeight, 0)
 
+/**
+ * 三低档位：PB / PE / 距一年低点涨幅三项阈值的预设档。
+ * 「距一年低点」用现价相对一年内最低价的涨幅衡量，越接近 0 越贴近底部。
+ */
+export type TripleLowTier = 'off' | 'loose' | 'standard' | 'strict'
+
+export const TRIPLE_LOW_PRESETS: Record<
+  Exclude<TripleLowTier, 'off'>,
+  { label: string; pbMax: number; peMax: number; lowGapMax: number }
+> = {
+  loose: { label: '宽松（PB≤1.2 / PE≤12 / 距低点≤10%）', pbMax: 1.2, peMax: 12, lowGapMax: 0.1 },
+  standard: { label: '标准（PB≤1.0 / PE≤10 / 距低点≤5%）', pbMax: 1.0, peMax: 10, lowGapMax: 0.05 },
+  strict: { label: '严格（PB≤0.8 / PE≤8 / 距低点≤3%）', pbMax: 0.8, peMax: 8, lowGapMax: 0.03 },
+}
+
+/** 三低筛选：PB、PE 与「现价距一年低点涨幅」需同时满足档位阈值；缺任一项视为不通过。 */
+export const matchesTripleLow = (stock: ScoredStock, tier: TripleLowTier) => {
+  if (tier === 'off') return true
+  const preset = TRIPLE_LOW_PRESETS[tier]
+  const { pb, pe, gain1y } = stock
+  if (pb === null || pb <= 0 || pe === null || pe <= 0 || gain1y === null) {
+    return false
+  }
+  return pb <= preset.pbMax && pe <= preset.peMax && gain1y <= preset.lowGapMax
+}
+
 export const summarizeMarket = (market: MarketSnapshot) => {
   if (market.allMarketPb <= 1.5) {
     return {
@@ -312,6 +412,47 @@ export const summarizeMarket = (market: MarketSnapshot) => {
     tone: '停止扩张仓位',
     description: '仅做换仓与风险管理，避免在整体估值过高时新增大额仓位。',
   }
+}
+
+/**
+ * 上证指数点位 → 建议权益仓位分档表。
+ * 越跌仓位越重：4100 点以上空仓，2100 点以下满仓，每 100 点一档，仓位上限线性上升 5%。
+ * 作为大数投资「按点位定仓位」的参考刻度，与全市场 PB 口径互为印证。
+ */
+const buildIndexPositionBands = (): IndexPositionBand[] => {
+  const topFloor = 4100
+  const bottomFloor = 2100
+  const bands: IndexPositionBand[] = [
+    { floor: topFloor, label: `${topFloor} 以上`, minPct: 0, maxPct: 0 },
+  ]
+  for (let floor = topFloor - 100; floor >= bottomFloor; floor -= 100) {
+    const maxPct = Math.round(
+      ((topFloor - floor) / (topFloor - bottomFloor)) * 100,
+    )
+    bands.push({
+      floor,
+      label: `${floor} – ${floor + 100}`,
+      minPct: Math.max(maxPct - 5, 0),
+      maxPct,
+    })
+  }
+  bands.push({
+    floor: Number.NEGATIVE_INFINITY,
+    label: `${bottomFloor} 以下`,
+    minPct: 100,
+    maxPct: 100,
+  })
+  return bands
+}
+
+export const INDEX_POSITION_BANDS = buildIndexPositionBands()
+
+/** 返回点位落入的仓位档位；点位无效时返回 null */
+export const pickIndexPositionBand = (
+  level: number | null,
+): IndexPositionBand | null => {
+  if (level === null || !Number.isFinite(level)) return null
+  return INDEX_POSITION_BANDS.find((band) => level >= band.floor) ?? null
 }
 
 /** 用全市场样本中位数估算整体估值水平，避免依赖单一指数口径 */

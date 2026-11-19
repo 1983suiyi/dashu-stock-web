@@ -7,6 +7,9 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { queryKline } from './kline.mjs'
+import { getPbFloors } from './pb-floor.mjs'
+import { getIndustryCycle } from './industry-cycle.mjs'
+import { getStockValuation } from './stock-valuation.mjs'
 
 const PORT = Number(process.env.PORT || 8787)
 const HOST = process.env.HOST || '0.0.0.0'
@@ -84,6 +87,42 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname === '/api/health') {
     sendJson(res, 200, { ok: true, dist: DIST_DIR })
+    return
+  }
+
+  if (url.pathname === '/api/pb-floor') {
+    try {
+      const result = await getPbFloors()
+      sendJson(res, 200, result)
+    } catch (error) {
+      sendJson(res, 500, {
+        error: `PB 底计算异常：${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+    return
+  }
+
+  if (url.pathname === '/api/industry-cycle') {
+    try {
+      const result = await getIndustryCycle()
+      sendJson(res, 200, result)
+    } catch (error) {
+      sendJson(res, 500, {
+        error: `行业周期计算异常：${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+    return
+  }
+
+  if (url.pathname === '/api/stock-valuation') {
+    try {
+      const result = await getStockValuation(url.searchParams.get('code') ?? '')
+      sendJson(res, 200, result)
+    } catch (error) {
+      sendJson(res, 500, {
+        error: `个股估值历史异常：${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
     return
   }
 

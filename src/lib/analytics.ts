@@ -17,6 +17,7 @@ const sum = (values: number[]) =>
 
 export const summarizeIndustries = (
   stocks: ScoredStock[],
+  historicalPbFloors?: Record<string, number>,
 ): IndustrySummary[] => {
   const grouped = new Map<string, ScoredStock[]>()
   for (const stock of stocks) {
@@ -71,8 +72,23 @@ export const summarizeIndustries = (
       const pb = marketCap !== null && netAsset !== null && netAsset > 0
         ? marketCap / netAsset
         : null
-      const pbFloor =
-        positivePbs.length === 0 ? null : Math.min(...positivePbs)
+
+      // PB 底：优先用历史统计口径（按 sourceIndustry 查，多来源取最低）
+      let pbFloor: number | null = null
+      if (historicalPbFloors) {
+        const sourceFloors = members
+          .map((stock) =>
+            stock.sourceIndustry ? historicalPbFloors[stock.sourceIndustry] : undefined,
+          )
+          .filter((value): value is number => value !== undefined && value > 0)
+        if (sourceFloors.length > 0) {
+          pbFloor = Math.min(...sourceFloors)
+        }
+      }
+      if (pbFloor === null) {
+        pbFloor = positivePbs.length === 0 ? null : Math.min(...positivePbs)
+      }
+
       const pbGain =
         pb !== null && pbFloor !== null && pbFloor > 0
           ? (pb / pbFloor - 1) * 100

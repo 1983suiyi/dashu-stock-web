@@ -23,3 +23,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 运行时生成的缓存（PB 底 / 行业周期）
+server/*-cache.json
+
+# 导出资料与打包产物
+大数投资_知识树.html
+大数投资_知识简图.svg
+大数投资_详细思维导图.html
+.trae-html-share-packages/

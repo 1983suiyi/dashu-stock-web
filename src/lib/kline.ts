@@ -16,7 +16,7 @@ export type KlineBatch = {
   failed: string[]
 }
 
-/** 通过后端代理批量获取前复权一年/三年低价 */
+/** 通过后端代理获取腾讯 52 周高低点及前复权三年低价 */
 export const fetchKlines = async (
   codes: string[],
   days: number,
@@ -54,9 +54,36 @@ export const fetchKlines = async (
   return { data, failed }
 }
 
-/** 把 K 线结果回填到股票记录 */
+/** 上证指数在腾讯行情的符号 */
+export const SHANGHAI_INDEX_SYMBOL = 'sh000001'
+
+/**
+ * 拉取上证指数快照（当前点位 + 近一年高低）。
+ * 复用后端 /api/kline 代理：指数符号已满足 sh + 6 位代码的校验，无需新增接口。
+ */
+export const fetchIndexSnapshot = async (
+  symbol: string = SHANGHAI_INDEX_SYMBOL,
+): Promise<KlineResult | null> => {
+  try {
+    const params = new URLSearchParams({ codes: symbol, days: '30' })
+    const response = await fetch(`/api/kline?${params.toString()}`)
+    if (!response.ok) return null
+    const payload = (await response.json()) as Partial<KlineBatch>
+    return payload.data?.[symbol] ?? null
+  } catch {
+    return null
+  }
+}
+
+/** 把 K 线结果回填到股票记录，同时用腾讯快照最新价刷新现价 */
 export const applyKline = <
-  T extends { code: string; lowPrice1y: number | null; lowPrice3y: number | null },
+  T extends {
+    code: string
+    price: number | null
+    highPrice1y: number | null
+    lowPrice1y: number | null
+    lowPrice3y: number | null
+  },
 >(
   stocks: T[],
   kline: Record<string, KlineResult>,
@@ -67,6 +94,12 @@ export const applyKline = <
     if (!entry) return stock
     return {
       ...stock,
+      // 腾讯快照会在交易时段返回更新中的现价，这里优先覆盖东财主表的交易日快照。
+      price:
+        entry.lastClose !== null && entry.lastClose > 0
+          ? entry.lastClose
+          : stock.price,
+      highPrice1y: entry.high1y ?? stock.highPrice1y,
       lowPrice1y: entry.low1y ?? stock.lowPrice1y,
       lowPrice3y: entry.low3y ?? stock.lowPrice3y,
     }
