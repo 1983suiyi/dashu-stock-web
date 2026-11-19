@@ -7,6 +7,7 @@ import type { ReactNode } from 'react'
 import { apiGet, apiSend } from './api'
 import { SessionContext } from './session'
 import type { CodePurpose, SessionUser, SessionValue } from './session'
+import { syncOnLogin } from './sync'
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null)
@@ -26,6 +27,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       active = false
     }
   }, [refresh])
+
+  // 登录态建立后触发数据同步：本地旧数据迁移 + 云端拉取覆盖本地
+  useEffect(() => {
+    if (user) {
+      syncOnLogin(user.id).catch(() => {
+        // 同步失败不阻断使用，本地缓存仍可用
+      })
+    }
+  }, [user])
 
   const login = useCallback<SessionValue['login']>(async (email, password) => {
     const result = await apiSend<{ user: SessionUser }>('/api/auth/login', 'POST', {

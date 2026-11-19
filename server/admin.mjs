@@ -6,7 +6,8 @@
 import { randomBytes } from 'node:crypto'
 import { db, now } from './db.mjs'
 import { fail, ok, readJsonBody } from './http.mjs'
-import { recordAudit } from './auth.mjs'
+import { hashPassword, recordAudit } from './auth.mjs'
+import { upsertMarketTemperature } from './market-temperature.mjs'
 
 const clampInt = (value, fallback, min, max) => {
   const parsed = Number.parseInt(String(value ?? ''), 10)
@@ -112,6 +113,177 @@ export const handleAdminRoute = async (req, res, url, session) => {
         ip,
       })
       ok(res, { updated: true })
+      return true
+    }
+
+    // ---------- 用户管理 ----------
+
+    if (pathname === '/api/admin/users' && method === 'GET') {
+      const page = clampInt(url.searchParams.get('page'), 1, 1, 100000)
+      const pageSize = clampInt(url.searchParams.get('pageSize'), 50, 1, 200)
+      const statusFilter = url.searchParams.get('status') || ''
+      const emailKeyword = (url.searchParams.get('email') || '').trim().toLowerCase()
+
+      const where = []
+      const params = []
+      if (statusFilter) {
+        where.push('status = ?')
+        params.push(statusFilter)
+      }
+      if (emailKeyword) {
+        where.push('email LIKE ?')
+        params.push(`%${emailKeyword}%`)
+      }
+      const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
+
+      const total = Number(
+        db.prepare(`SELECT COUNT(*) AS c FROM users ${whereSql}`).get(...params).c,
+      )
+      const offset = (page - 1) * pageSize
+      const rows = db
+        .prepare(
+          `SELECT id, email, status, role, created_at, last_login_at
+           FROM users ${whereSql}
+           ORDER BY created_at DESC
+           LIMIT ? OFFSET ?`,
+        )
+        .all(...params, pageSize, offset)
+
+      ok(res, {
+        users: rows.map((row) => ({
+          id: Number(row.id),
+          email: row.email,
+          status: row.status,
+          role: row.role,
+          createdAt: Number(row.created_at),
+          lastLoginAt: row.last_login_at ? Number(row.last_login_at) : null,
+        })),
+        total,
+        page,
+        pageSize,
+      })
+      return true
+    }
+
+    if (pathname.startsWith('/api/admin/users/') && method === 'PATCH') {
+      const userId = Number.parseInt(
+        decodeURIComponent(pathname.slice('/api/admin/users/'.length)),
+        10,
+      )
+      if (!Number.isFinite(userId)) {
+        fail(res, 400, 'INVALID_INPUT', '用户 ID 不合法')
+        return true
+      }
+      const body = await readJsonBody(req)
+      const status = body.status === 'disabled' ? 'disabled' : body.status === 'active' ? 'active' : null
+      if (!status) {
+        fail(res, 400, 'INVALID_INPUT', 'status 需为 active 或 disabled')
+        return true
+      }
+      if (userId === session.user.id) {
+        fail(res, 400, 'INVALID_INPUT', '不能操作自己')
+        return true
+      }
+      const info = db.prepare('UPDATE users SET status = ? WHERE id = ?').run(status, userId)
+      if (Number(info.changes) === 0) {
+        fail(res, 404, 'INVALID_INPUT', '用户不存在')
+        return true
+      }
+      recordAudit({
+        actorUserId: session.user.id,
+        action: 'user_status_update',
+        target: String(userId),
+        detail: { status },
+        ip,
+      })
+      ok(res, { updated: true })
+      return true
+    }
+
+    if (pathname.startsWith('/api/admin/users/') && method === 'DELETE') {
+      const userId = Number.parseInt(
+        decodeURIComponent(pathname.slice('/api/admin/users/'.length)),
+        10,
+      )
+      if (!Number.isFinite(userId)) {
+        fail(res, 400, 'INVALID_INPUT', '用户 ID 不合法')
+        return true
+      }
+      if (userId === session.user.id) {
+        fail(res, 400, 'INVALID_INPUT', '不能删除自己')
+        return true
+      }
+      const info = db.prepare('DELETE FROM users WHERE id = ?').run(userId)
+      if (Number(info.changes) === 0) {
+        fail(res, 404, 'INVALID_INPUT', '用户不存在')
+        return true
+      }
+      recordAudit({
+        actorUserId: session.user.id,
+        action: 'user_delete',
+        target: String(userId),
+        ip,
+      })
+      ok(res, { deleted: true })
+      return true
+    }
+
+    if (pathname.startsWith('/api/admin/users/') && pathname.endsWith('/reset-password') && method === 'POST') {
+      const userId = Number.parseInt(
+        decodeURIComponent(
+          pathname.slice('/api/admin/users/'.length, -'/reset-password'.length),
+        ),
+        10,
+      )
+      if (!Number.isFinite(userId)) {
+        fail(res, 400, 'INVALID_INPUT', '用户 ID 不合法')
+        return true
+      }
+      const body = await readJsonBody(req)
+      const newPassword = typeof body.newPassword === 'string' ? body.newPassword : ''
+      if (newPassword.length < 8) {
+        fail(res, 400, 'INVALID_INPUT', '密码至少 8 位')
+        return true
+      }
+      const { hash, salt } = hashPassword(newPassword)
+      const info = db
+        .prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?')
+        .run(hash, salt, userId)
+      if (Number(info.changes) === 0) {
+        fail(res, 404, 'INVALID_INPUT', '用户不存在')
+        return true
+      }
+      // 重置密码后清除该用户所有会话，强制重新登录
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId)
+      recordAudit({
+        actorUserId: session.user.id,
+        action: 'user_reset_password',
+        target: String(userId),
+        ip,
+      })
+      ok(res, { reset: true })
+      return true
+    }
+
+    // ---------- 市场温度校正 ----------
+
+    if (pathname.startsWith('/api/admin/market-temperature/') && method === 'PUT') {
+      const date = decodeURIComponent(pathname.slice('/api/admin/market-temperature/'.length))
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        fail(res, 400, 'INVALID_INPUT', 'date 需为 YYYY-MM-DD')
+        return true
+      }
+      const body = await readJsonBody(req)
+      const record = { date, ...(body.record || body) }
+      upsertMarketTemperature(record)
+      recordAudit({
+        actorUserId: session.user.id,
+        action: 'market_temperature_correct',
+        target: date,
+        detail: record,
+        ip,
+      })
+      ok(res, { updated: true, date })
       return true
     }
 

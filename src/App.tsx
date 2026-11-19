@@ -19,6 +19,8 @@ import {
 import { IndustryCycleChart } from './components/IndustryCycleChart'
 import { StockValuationChart } from './components/StockValuationChart'
 import { UserMenu } from './auth/UserMenu'
+import { syncSave } from './auth/sync'
+import { apiGet, apiSend } from './auth/api'
 import {
   buildAiHighlights,
   explainStockExclusion,
@@ -678,6 +680,7 @@ const loadMarketTemperature = (): MarketTemperatureRecord[] => {
 /**
  * 按日期写入/覆盖当日温度记录并倒序保存。
  * 内容与已有当日记录完全一致时返回原数组，避免无谓的重渲染。
+ * 同时异步写入服务端公共 market_temperature 表（所有用户共享一份）。
  */
 const upsertMarketTemperature = (
   records: MarketTemperatureRecord[],
@@ -695,6 +698,8 @@ const upsertMarketTemperature = (
   } catch {
     // 缓存失败不影响主流程
   }
+  // 异步同步到服务端公共表；失败不影响本地
+  apiSend<{ updated: boolean }>('/api/market-temperature', 'POST', { record }).catch(() => {})
   return next
 }
 const currency = (value: number | null, digits = 0) =>
@@ -721,6 +726,24 @@ function App() {
   const [marketTemperature, setMarketTemperature] = useState<
     MarketTemperatureRecord[]
   >(() => loadMarketTemperature())
+
+  // 挂载时从服务端公共表拉取市场温度，覆盖本地缓存
+  useEffect(() => {
+    let active = true
+    apiGet<{ records: MarketTemperatureRecord[] }>('/api/market-temperature').then((result) => {
+      if (active && result.ok && result.data.records?.length) {
+        setMarketTemperature(result.data.records)
+        try {
+          localStorage.setItem(MARKET_TEMPERATURE_CACHE_KEY, JSON.stringify(result.data.records))
+        } catch {
+          // 缓存失败不影响主流程
+        }
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [])
   const [indexLoading, setIndexLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
@@ -799,11 +822,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    try {
-      localStorage.setItem(HOLDING_STORAGE_KEY, JSON.stringify(holdingImports))
-    } catch {
-      // localStorage 超限时保留内存态，不打断主流程
-    }
+    syncSave('holdings', holdingImports)
   }, [holdingImports])
 
   useEffect(() => {
@@ -910,30 +929,15 @@ function App() {
   }, [industryCycleFetchAttempt])
 
   useEffect(() => {
-    try {
-      localStorage.setItem(CASH_BALANCE_STORAGE_KEY, String(cashBalance))
-    } catch {
-      // localStorage 超限时保留内存态，不打断主流程
-    }
+    syncSave('cash', cashBalance)
   }, [cashBalance])
 
   useEffect(() => {
-    try {
-      localStorage.setItem(
-        TOTAL_ASSETS_STORAGE_KEY,
-        totalAssets === null ? '' : String(totalAssets),
-      )
-    } catch {
-      // localStorage 超限时保留内存态，不打断主流程
-    }
+    syncSave('totalAssets', totalAssets)
   }, [totalAssets])
 
   useEffect(() => {
-    try {
-      localStorage.setItem(CAPITAL_EVENTS_STORAGE_KEY, JSON.stringify(capitalEvents))
-    } catch {
-      // localStorage 超限时保留内存态，不打断主流程
-    }
+    syncSave('capitalEvents', capitalEvents)
   }, [capitalEvents])
 
   const scoredStocks = useMemo(
@@ -1444,11 +1448,7 @@ function App() {
 
   const persistSnapshots = (next: ArchiveSnapshot[]) => {
     setSnapshots(next)
-    try {
-      localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(next))
-    } catch {
-      // localStorage 超限时保留内存态，不打断主流程
-    }
+    syncSave('archives', next)
   }
 
   const handleConfigChange = (key: keyof StrategyConfig, value: number) => {

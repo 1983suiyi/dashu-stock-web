@@ -4,6 +4,8 @@
  */
 import { handleAuthRoute, getSessionUser } from './auth.mjs'
 import { handleAdminRoute } from './admin.mjs'
+import { handleUserDataRoute } from './user-data.mjs'
+import { handleMarketTemperatureRoute } from './market-temperature.mjs'
 
 /**
  * 尝试处理账号类接口。
@@ -16,6 +18,9 @@ export const handleAccountApi = async (req, res, url) => {
     const session = getSessionUser(req)
     return handleAdminRoute(req, res, url, session)
   }
+
+  if (await handleUserDataRoute(req, res, url)) return true
+  if (await handleMarketTemperatureRoute(req, res, url)) return true
 
   return false
 }

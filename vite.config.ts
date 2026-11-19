@@ -26,12 +26,15 @@ const klineApiPlugin = (): Plugin => ({
 
       const url = new URL(req.url, 'http://localhost')
 
-      // 账号接口（/api/auth/* 与 /api/admin/*）：与生产共用 server/api.mjs
+      // 账号与数据接口（/api/auth/* /api/admin/* /api/user-data/* /api/market-temperature）：
+      // 与生产共用 server/api.mjs
       // 动态 import：该模块链会用到 node:sqlite，延迟到实际请求时再加载，
       // 避免构建期被 esbuild 预解析配置时报 ERR_UNKNOWN_BUILTIN_MODULE。
       if (
         url.pathname.startsWith('/api/auth/') ||
-        url.pathname.startsWith('/api/admin/')
+        url.pathname.startsWith('/api/admin/') ||
+        url.pathname.startsWith('/api/user-data/') ||
+        url.pathname === '/api/market-temperature'
       ) {
         import(/* @vite-ignore */ serverApiUrl())
           .then(({ handleAccountApi }) =>

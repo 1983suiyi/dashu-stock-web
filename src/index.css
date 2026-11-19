@@ -1670,3 +1670,65 @@ button:disabled {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.admin-tabs {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+  border-bottom: 1px solid rgba(143, 170, 220, 0.14);
+}
+
+.admin-tab {
+  padding: 0.6rem 1.1rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 12px 12px 0 0;
+  background: transparent;
+  color: #8db0ff;
+  cursor: pointer;
+  font: inherit;
+  transition: all 0.15s ease;
+}
+
+.admin-tab:hover {
+  color: #cfe0ff;
+  background: rgba(143, 170, 220, 0.06);
+}
+
+.admin-tab.active {
+  color: #eff5ff;
+  border-bottom-color: #2d66f6;
+  background: rgba(45, 102, 246, 0.08);
+}
+
+.admin-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 10, 20, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 20px;
+}
+
+.admin-modal {
+  width: min(520px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-modal h3 {
+  margin: 0;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+}
+

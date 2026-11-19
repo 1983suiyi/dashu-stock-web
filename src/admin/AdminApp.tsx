@@ -1,13 +1,26 @@
 /**
- * 管理端外壳：会话校验 + 管理员权限判定 + 邀请码管理。
- * 用户管理 / 市场温度校正 / 审计日志将在 P2、P3 阶段加入。
+ * 管理端外壳：会话校验 + 管理员权限判定 + 多面板切换。
+ * 面板：邀请码管理（P1）、用户管理（P2）、市场温度校正（P2）。
+ * 审计日志将在 P3 阶段加入。
  */
+import { useState } from 'react'
 import { useSession } from '../auth/session'
 import { AuthPanel } from '../auth/AuthPanel'
 import { InvitesPanel } from './InvitesPanel'
+import { UsersPanel } from './UsersPanel'
+import { MarketTemperaturePanel } from './MarketTemperaturePanel'
+
+type Tab = 'invites' | 'users' | 'temperature'
+
+const TABS: Array<{ key: Tab; label: string }> = [
+  { key: 'invites', label: '邀请码' },
+  { key: 'users', label: '用户管理' },
+  { key: 'temperature', label: '市场温度' },
+]
 
 export function AdminApp() {
   const { user, loading, logout } = useSession()
+  const [tab, setTab] = useState<Tab>('invites')
 
   if (loading) {
     return (
@@ -61,8 +74,24 @@ export function AdminApp() {
           </button>
         </div>
       </header>
+
+      <nav className="admin-tabs">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            className={tab === t.key ? 'admin-tab active' : 'admin-tab'}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
       <main className="admin-main">
-        <InvitesPanel />
+        {tab === 'invites' && <InvitesPanel />}
+        {tab === 'users' && <UsersPanel />}
+        {tab === 'temperature' && <MarketTemperaturePanel />}
       </main>
     </div>
   )
