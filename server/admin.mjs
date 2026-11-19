@@ -1,12 +1,11 @@
 /**
- * 管理端接口（P1：邀请码管理）。
+ * 管理端接口：邀请码管理（P1）、用户管理 + 市场温度校正（P2）、审计日志查询（P3）。
  * 所有接口强制 role=admin；写操作一律记入 audit_logs。
- * 后续阶段在此追加：用户管理、市场温度校正、审计日志查询（P2/P3）。
  */
 import { randomBytes } from 'node:crypto'
 import { db, now } from './db.mjs'
 import { fail, ok, readJsonBody } from './http.mjs'
-import { hashPassword, recordAudit } from './auth.mjs'
+import { deleteUserCascade, hashPassword, recordAudit } from './auth.mjs'
 import { upsertMarketTemperature } from './market-temperature.mjs'
 
 const clampInt = (value, fallback, min, max) => {
@@ -213,8 +212,8 @@ export const handleAdminRoute = async (req, res, url, session) => {
         fail(res, 400, 'INVALID_INPUT', '不能删除自己')
         return true
       }
-      const info = db.prepare('DELETE FROM users WHERE id = ?').run(userId)
-      if (Number(info.changes) === 0) {
+      const changes = deleteUserCascade(userId)
+      if (changes === 0) {
         fail(res, 404, 'INVALID_INPUT', '用户不存在')
         return true
       }
@@ -284,6 +283,51 @@ export const handleAdminRoute = async (req, res, url, session) => {
         ip,
       })
       ok(res, { updated: true, date })
+      return true
+    }
+
+    // ---------- 审计日志 ----------
+
+    if (pathname === '/api/admin/audit-logs' && method === 'GET') {
+      const page = clampInt(url.searchParams.get('page'), 1, 1, 100000)
+      const pageSize = clampInt(url.searchParams.get('pageSize'), 50, 1, 200)
+      const action = (url.searchParams.get('action') || '').trim()
+
+      const where = []
+      const params = []
+      if (action) {
+        where.push('action = ?')
+        params.push(action)
+      }
+      const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
+
+      const total = Number(
+        db.prepare(`SELECT COUNT(*) AS c FROM audit_logs ${whereSql}`).get(...params).c,
+      )
+      const offset = (page - 1) * pageSize
+      const rows = db
+        .prepare(
+          `SELECT id, actor_user_id, action, target, detail, ip, created_at
+           FROM audit_logs ${whereSql}
+           ORDER BY created_at DESC, id DESC
+           LIMIT ? OFFSET ?`,
+        )
+        .all(...params, pageSize, offset)
+
+      ok(res, {
+        logs: rows.map((row) => ({
+          id: Number(row.id),
+          actorUserId: row.actor_user_id == null ? null : Number(row.actor_user_id),
+          action: row.action,
+          target: row.target,
+          detail: row.detail ? JSON.parse(row.detail) : null,
+          ip: row.ip,
+          createdAt: Number(row.created_at),
+        })),
+        total,
+        page,
+        pageSize,
+      })
       return true
     }
 

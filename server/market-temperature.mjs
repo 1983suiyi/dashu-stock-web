@@ -7,7 +7,8 @@
  *   POST /api/market-temperature       按日期幂等 upsert 当日一条
  */
 import { db, now } from './db.mjs'
-import { fail, getSessionUser, ok, readJsonBody } from './http.mjs'
+import { fail, ok, readJsonBody } from './http.mjs'
+import { getSessionUser } from './auth.mjs'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const DEFAULT_LIMIT = 240

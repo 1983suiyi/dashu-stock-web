@@ -7,7 +7,8 @@
  *   PUT  /api/user-data/:kind   覆盖写入当前用户某类数据
  */
 import { db, now } from './db.mjs'
-import { fail, getSessionUser, ok, readJsonBody } from './http.mjs'
+import { fail, ok, readJsonBody } from './http.mjs'
+import { getSessionUser } from './auth.mjs'
 
 const ALLOWED_KINDS = new Set([
   'holdings',

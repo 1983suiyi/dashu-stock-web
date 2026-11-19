@@ -143,6 +143,18 @@ export const getUserById = (userId) => {
   return row ? toUser(row) : null
 }
 
+/**
+ * 删除用户并清理其关联数据。
+ * sessions / user_data 通过外键 ON DELETE CASCADE 自动清理；
+ * audit_logs.actor_user_id 与 invites.created_by 无级联，先置空避免外键阻塞删除。
+ * 返回实际删除的行数。
+ */
+export const deleteUserCascade = (userId) => {
+  db.prepare('UPDATE audit_logs SET actor_user_id = NULL WHERE actor_user_id = ?').run(userId)
+  db.prepare('UPDATE invites SET created_by = NULL WHERE created_by = ?').run(userId)
+  return Number(db.prepare('DELETE FROM users WHERE id = ?').run(userId).changes)
+}
+
 // ---------- 会话 ----------
 
 const createSession = (userId, ip, userAgent) => {
@@ -478,6 +490,38 @@ export const handleAuthRoute = async (req, res, url) => {
         return true
       }
       ok(res, result.data)
+      return true
+    }
+
+    if (pathname === '/api/auth/delete-account' && method === 'POST') {
+      const session = getSessionUser(req)
+      if (!session) {
+        reject(res, 'UNAUTHORIZED')
+        return true
+      }
+      const user = session.user
+      if (user.role === 'admin') {
+        reject(res, 'FORBIDDEN', '管理员账号不可自助删除，请联系其他管理员处理')
+        return true
+      }
+      const body = await readJsonBody(req)
+      const row = db
+        .prepare('SELECT password_hash, password_salt FROM users WHERE id = ?')
+        .get(user.id)
+      if (!row || !verifyPassword(String(body.password ?? ''), row.password_hash, row.password_salt)) {
+        reject(res, 'BAD_CREDENTIALS', '密码不正确')
+        return true
+      }
+      // 先记审计（actor 置空，删除后该列会被置空，无外键阻塞）
+      recordAudit({
+        action: 'account_delete',
+        target: String(user.id),
+        detail: { email: user.email },
+        ip,
+      })
+      deleteUserCascade(user.id)
+      res.setHeader('Set-Cookie', clearSessionCookie())
+      ok(res, { deleted: true })
       return true
     }
 
