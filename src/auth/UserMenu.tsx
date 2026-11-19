@@ -51,18 +51,20 @@ export function UserMenu() {
         <button type="button" className="button-secondary" onClick={() => void logout()}>
           退出登录
         </button>
-        <button
-          type="button"
-          className="button-secondary"
-          style={{ color: '#ff8a8a' }}
-          onClick={() => {
-            setError(null)
-            setPassword('')
-            setShowDelete(true)
-          }}
-        >
-          删除账号
-        </button>
+        {!isAdmin && (
+          <button
+            type="button"
+            className="button-secondary"
+            style={{ color: '#ff8a8a' }}
+            onClick={() => {
+              setError(null)
+              setPassword('')
+              setShowDelete(true)
+            }}
+          >
+            删除账号
+          </button>
+        )}
       </div>
 
       {showDelete &&
