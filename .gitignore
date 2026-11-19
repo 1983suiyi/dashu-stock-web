@@ -32,6 +32,10 @@ server/*.db
 server/*.db-wal
 server/*.db-shm
 
+# 本地环境变量（含密钥，禁止入库）
+.env
+.env.local
+
 # 导出资料与打包产物
 大数投资_知识树.html
 大数投资_知识简图.svg
