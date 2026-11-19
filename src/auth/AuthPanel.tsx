@@ -172,8 +172,7 @@ export function AuthPanel({
             <input
               value={invite}
               onChange={(event) => setInvite(event.target.value)}
-              placeholder="内测邀请码"
-              required
+              placeholder="内测邀请码（管理员邮箱可留空）"
             />
           </label>
         )}
