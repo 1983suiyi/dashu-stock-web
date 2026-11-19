@@ -34,6 +34,7 @@ import {
   MAX_SCORE,
   PB_FLOOR_FAR_PCT,
   PB_FLOOR_NEAR_PCT,
+  computeMarketTemperature,
   deriveMarketSnapshot,
   matchesTripleLow,
   pbBand,
@@ -42,6 +43,7 @@ import {
   pickKlineCandidates,
   portfolioExposure,
   recommendPortfolio,
+  riskPassed,
   scoreStocks,
   summarizeMarket,
   TRIPLE_LOW_PRESETS,
@@ -544,12 +546,7 @@ const getRiskItems = (stock: ScoredStock): RiskItem[] => {
   return items
 }
 
-/** 触发硬过滤的扫雷项数量（null 表示数据缺失，不计入） */
-const riskTriggeredCount = (stock: ScoredStock) =>
-  getRiskItems(stock).filter((item) => item.triggered === true).length
-
-/** 扫雷是否全部通过：只有明确触发的项才算未通过，数据缺失按通过处理 */
-const riskPassed = (stock: ScoredStock) => riskTriggeredCount(stock) === 0
+/** 扫雷是否全部通过：复用 strategy.riskPassed（数据缺失按通过处理） */
 
 /** 金融行业（银行/保险/证券/多元金融），大数投资原则不纳入组合 */
 const FINANCIAL_KEYWORDS = ['银行', '保险', '证券', '多元金融', '非银金融', '金融服务']
@@ -1068,19 +1065,12 @@ function App() {
 
   /** 当日市场温度：把关键指标固化成一行，按日期累积留存 */
   const todayTemperature = useMemo<MarketTemperatureRecord>(
-    () => ({
-      date: todayText(),
-      indexLevel: indexSnapshot?.price ?? null,
-      exposurePct: indexBand?.maxPct ?? null,
-      pbMedian: market.allMarketPb > 0 ? market.allMarketPb : null,
-      peMedian: market.allMarketPe > 0 ? market.allMarketPe : null,
-      belowNetCount: scoredStocks.filter(
-        (stock) => stock.pb !== null && stock.pb > 0 && stock.pb < 1,
-      ).length,
-      threeLowCount: eligibleStocks.length,
-      riskPassedCount: scoredStocks.filter((stock) => riskPassed(stock)).length,
-    }),
-    [scoredStocks, eligibleStocks, market, indexSnapshot, indexBand],
+    () =>
+      computeMarketTemperature(stocks, indexSnapshot?.price ?? null, config, {
+        historicalPbFloors: historicalPbFloors ?? undefined,
+        historicalStockPbFloors: historicalStockPbFloors ?? undefined,
+      }),
+    [stocks, indexSnapshot, config, historicalPbFloors, historicalStockPbFloors],
   )
 
   // 有全市场数据时，按日期写入/覆盖当日温度记录

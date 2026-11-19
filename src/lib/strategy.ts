@@ -1,6 +1,7 @@
 import type {
   IndexPositionBand,
   MarketSnapshot,
+  MarketTemperatureRecord,
   PortfolioHolding,
   ScoredStock,
   StockRecord,
@@ -467,5 +468,53 @@ export const deriveMarketSnapshot = (stocks: StockRecord[]): MarketSnapshot => {
   return {
     allMarketPb: Number((median(pbs) ?? 0).toFixed(2)),
     allMarketPe: Number((median(pes) ?? 0).toFixed(2)),
+  }
+}
+
+/**
+ * 扫雷是否全部通过：只有「明确触发」硬过滤的项才算未通过，
+ * 数据缺失（null）按通过处理，避免因公开接口字段缺失而误杀。
+ * 与 getRiskItems 的三项（资产负债率、商誉、股权质押）口径一致。
+ */
+export const riskPassed = (stock: ScoredStock): boolean => {
+  if (stock.debtAboveIndustryMedian === true) return false
+  if (stock.goodwillRatio !== null && stock.goodwillRatio >= MAX_GOODWILL_RATIO) return false
+  if (stock.pledgeRatio !== null && stock.pledgeRatio >= MAX_PLEDGE_RATIO) return false
+  return true
+}
+
+/**
+ * 根据全市场股票 + 上证点位，计算当日市场温度记录。
+ *
+ * 这是用户端 todayTemperature 与管理端「自动拉取校正」共用的纯函数，
+ * 保证两端口径完全一致。
+ */
+export const computeMarketTemperature = (
+  stocks: StockRecord[],
+  indexLevel: number | null,
+  config: StrategyConfig,
+  opts?: {
+    historicalPbFloors?: Record<string, number>
+    historicalStockPbFloors?: Record<string, number>
+  },
+): MarketTemperatureRecord => {
+  const scored = scoreStocks(
+    stocks,
+    config,
+    opts?.historicalPbFloors,
+    opts?.historicalStockPbFloors,
+  )
+  const market = deriveMarketSnapshot(stocks)
+  const indexBand = pickIndexPositionBand(indexLevel)
+
+  return {
+    date: new Date().toISOString().slice(0, 10),
+    indexLevel,
+    exposurePct: indexBand?.maxPct ?? null,
+    pbMedian: market.allMarketPb > 0 ? market.allMarketPb : null,
+    peMedian: market.allMarketPe > 0 ? market.allMarketPe : null,
+    belowNetCount: scored.filter((s) => s.pb !== null && s.pb > 0 && s.pb < 1).length,
+    threeLowCount: scored.filter((s) => s.eligible).length,
+    riskPassedCount: scored.filter((s) => riskPassed(s)).length,
   }
 }
