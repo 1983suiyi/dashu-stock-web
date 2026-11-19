@@ -27,6 +27,11 @@ dist-ssr
 # 运行时生成的缓存（PB 底 / 行业周期）
 server/*-cache.json
 
+# SQLite 数据文件（账号 / 用户数据 / 会话）
+server/*.db
+server/*.db-wal
+server/*.db-shm
+
 # 导出资料与打包产物
 大数投资_知识树.html
 大数投资_知识简图.svg

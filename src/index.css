@@ -1480,3 +1480,193 @@ button:disabled {
     min-width: 96px;
   }
 }
+
+/* ---------- 账号：登录 / 注册 / 找回 ---------- */
+
+.auth-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.auth-card {
+  width: min(460px, 100%);
+  margin: 0;
+}
+
+.auth-head {
+  margin-bottom: 18px;
+}
+
+.auth-head h1 {
+  margin: 8px 0 6px;
+  font-size: 1.6rem;
+}
+
+.auth-head p {
+  margin: 0;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 0.6rem 0.8rem;
+  color: #cfddff;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: none;
+}
+
+.auth-tab.active {
+  color: #eff5ff;
+  background: linear-gradient(180deg, #2d66f6, #1e4fd6);
+}
+
+.auth-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  color: #91a7c6;
+  font-size: 0.92rem;
+}
+
+.auth-inline {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-inline input {
+  flex: 1;
+}
+
+.auth-inline button {
+  white-space: nowrap;
+}
+
+.auth-error,
+.auth-success {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 0.92rem;
+}
+
+.auth-error {
+  color: #ffd7d7;
+  background: rgba(214, 60, 60, 0.18);
+}
+
+.auth-success {
+  color: #d6ffe2;
+  background: rgba(46, 160, 90, 0.18);
+}
+
+/* ---------- 当前用户菜单 ---------- */
+
+.user-menu {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(143, 170, 220, 0.12);
+}
+
+.user-menu-email {
+  margin: 0 0 10px;
+  color: #cfddff;
+  font-size: 0.9rem;
+  word-break: break-all;
+}
+
+.user-menu-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-menu-link {
+  color: #98b7ff;
+  text-decoration: none;
+}
+
+.user-menu-link:hover {
+  text-decoration: underline;
+}
+
+.user-menu-actions button {
+  padding: 0.5rem 0.85rem;
+}
+
+/* ---------- 管理端 ---------- */
+
+.admin-shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.admin-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border: 1px solid rgba(143, 170, 220, 0.14);
+  border-radius: 20px;
+  background: rgba(11, 20, 34, 0.78);
+}
+
+.admin-header p {
+  margin: 4px 0 0;
+}
+
+.admin-main {
+  margin-top: 24px;
+}
+
+.admin-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  align-items: end;
+  margin-bottom: 18px;
+}
+
+.admin-form .auth-field {
+  margin-bottom: 0;
+}
+
+.admin-form button {
+  height: fit-content;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.row-actions button {
+  padding: 0.4rem 0.7rem;
+}
+
+.status-active {
+  color: #d6ffe2;
+  background: rgba(46, 160, 90, 0.2);
+}
+
+.status-muted {
+  color: #c8d4e6;
+  background: rgba(255, 255, 255, 0.08);
+}
+

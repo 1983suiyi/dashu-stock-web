@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { queryKline } from './server/kline.mjs'
@@ -23,7 +24,32 @@ const klineApiPlugin = (): Plugin => ({
         res.end(JSON.stringify(payload))
       }
 
-      if (req.url.startsWith('/api/industry-cycle')) {
+      const url = new URL(req.url, 'http://localhost')
+
+      // 账号接口（/api/auth/* 与 /api/admin/*）：与生产共用 server/api.mjs
+      // 动态 import：该模块链会用到 node:sqlite，延迟到实际请求时再加载，
+      // 避免构建期被 esbuild 预解析配置时报 ERR_UNKNOWN_BUILTIN_MODULE。
+      if (
+        url.pathname.startsWith('/api/auth/') ||
+        url.pathname.startsWith('/api/admin/')
+      ) {
+        import(/* @vite-ignore */ serverApiUrl())
+          .then(({ handleAccountApi }) =>
+            handleAccountApi(req as never, res as never, url),
+          )
+          .catch((error: unknown) => {
+            sendJson(500, {
+              ok: false,
+              error: {
+                code: 'INTERNAL',
+                message: error instanceof Error ? error.message : String(error),
+              },
+            })
+          })
+        return
+      }
+
+      if (url.pathname.startsWith('/api/industry-cycle')) {
         getIndustryCycle()
           .then((payload) => sendJson(200, payload))
           .catch((error: unknown) =>
@@ -34,8 +60,7 @@ const klineApiPlugin = (): Plugin => ({
         return
       }
 
-      if (req.url.startsWith('/api/stock-valuation')) {
-        const url = new URL(req.url, 'http://localhost')
+      if (url.pathname.startsWith('/api/stock-valuation')) {
         getStockValuation(url.searchParams.get('code') ?? '')
           .then((payload) => sendJson(200, payload))
           .catch((error: unknown) =>
@@ -46,12 +71,11 @@ const klineApiPlugin = (): Plugin => ({
         return
       }
 
-      if (!req.url.startsWith('/api/kline')) {
+      if (!url.pathname.startsWith('/api/kline')) {
         next()
         return
       }
 
-      const url = new URL(req.url, 'http://localhost')
       queryKline(url.searchParams.get('codes'), url.searchParams.get('days'))
         .then((payload) => sendJson(200, payload))
         .catch((error: unknown) =>
@@ -63,7 +87,22 @@ const klineApiPlugin = (): Plugin => ({
   },
 })
 
+const entry = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.url))
+
+// 通过运行时变量解析路径，避免 esbuild 在打包配置时静态跟随该动态 import
+// （其模块链依赖 node:sqlite，构建期不应加载）。
+const serverApiUrl = () => new URL('./server/api.mjs', import.meta.url).href
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react(), klineApiPlugin()],
+  build: {
+    rollupOptions: {
+      // 多入口（MPA）：用户端 index.html + 管理端 admin.html，产出两个独立 bundle
+      input: {
+        index: entry('index.html'),
+        admin: entry('admin.html'),
+      },
+    },
+  },
 })

@@ -10,6 +10,7 @@ import { queryKline } from './kline.mjs'
 import { getPbFloors } from './pb-floor.mjs'
 import { getIndustryCycle } from './industry-cycle.mjs'
 import { getStockValuation } from './stock-valuation.mjs'
+import { handleAccountApi } from './api.mjs'
 
 const PORT = Number(process.env.PORT || 8787)
 const HOST = process.env.HOST || '0.0.0.0'
@@ -38,7 +39,16 @@ const sendJson = (res, status, payload) => {
 }
 
 const serveStatic = async (res, pathname) => {
-  const relative = pathname === '/' ? '/index.html' : pathname
+  // 多入口（MPA）：/admin 系列走管理端，其余走用户端
+  const isAdminPath =
+    pathname === '/admin' ||
+    pathname === '/admin.html' ||
+    pathname.startsWith('/admin/')
+  const relative = isAdminPath
+    ? '/admin.html'
+    : pathname === '/'
+      ? '/index.html'
+      : pathname
   const target = join(DIST_DIR, relative)
 
   // 阻断路径穿越
@@ -47,11 +57,12 @@ const serveStatic = async (res, pathname) => {
     return
   }
 
-  const candidates = [target, join(DIST_DIR, 'index.html')]
+  const fallbackPage = isAdminPath ? '/admin.html' : '/index.html'
+  const candidates = [target, join(DIST_DIR, fallbackPage)]
   for (const candidate of candidates) {
     try {
       const body = await readFile(candidate)
-      const isFallback = candidate.endsWith('index.html') && candidate !== target
+      const isFallback = candidate.endsWith(fallbackPage) && candidate !== target
       res.writeHead(200, {
         'Content-Type':
           MIME_TYPES[extname(candidate)] ?? 'application/octet-stream',
@@ -69,6 +80,9 @@ const serveStatic = async (res, pathname) => {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
+
+  // 账号相关接口（/api/auth/* 与 /api/admin/*）
+  if (await handleAccountApi(req, res, url)) return
 
   if (url.pathname === '/api/kline') {
     try {
@@ -132,4 +146,5 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`大数选股服务已启动: http://${HOST}:${PORT}`)
   console.log(`静态目录: ${DIST_DIR}`)
+  console.log(`用户端: http://${HOST}:${PORT}/  管理端: http://${HOST}:${PORT}/admin`)
 })

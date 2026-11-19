@@ -18,6 +18,7 @@ import {
 } from './lib/cycle'
 import { IndustryCycleChart } from './components/IndustryCycleChart'
 import { StockValuationChart } from './components/StockValuationChart'
+import { UserMenu } from './auth/UserMenu'
 import {
   buildAiHighlights,
   explainStockExclusion,
@@ -3714,6 +3715,7 @@ function App() {
         <div className="sidebar-foot">
           <p>当前数据：{dataMeta ? `${dataMeta.total} 只` : '演示数据'}</p>
           <p>未补 K 线：{pendingKline} 只</p>
+          <UserMenu />
         </div>
       </aside>
 
