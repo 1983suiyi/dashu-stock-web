@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "start": "node --env-file-if-exists=.env server/index.mjs",
+    "backup": "node server/backup.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -1,7 +1,6 @@
 /**
  * 管理端外壳：会话校验 + 管理员权限判定 + 多面板切换。
- * 面板：邀请码管理（P1）、用户管理（P2）、市场温度校正（P2）。
- * 审计日志将在 P3 阶段加入。
+ * 面板：邀请码管理（P1）、用户管理（P2）、市场温度校正（P2）、审计日志（P3）。
  */
 import { useState } from 'react'
 import { useSession } from '../auth/session'
@@ -9,13 +8,15 @@ import { AuthPanel } from '../auth/AuthPanel'
 import { InvitesPanel } from './InvitesPanel'
 import { UsersPanel } from './UsersPanel'
 import { MarketTemperaturePanel } from './MarketTemperaturePanel'
+import { AuditLogsPanel } from './AuditLogsPanel'
 
-type Tab = 'invites' | 'users' | 'temperature'
+type Tab = 'invites' | 'users' | 'temperature' | 'audit'
 
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'invites', label: '邀请码' },
   { key: 'users', label: '用户管理' },
   { key: 'temperature', label: '市场温度' },
+  { key: 'audit', label: '审计日志' },
 ]
 
 export function AdminApp() {
@@ -92,6 +93,7 @@ export function AdminApp() {
         {tab === 'invites' && <InvitesPanel />}
         {tab === 'users' && <UsersPanel />}
         {tab === 'temperature' && <MarketTemperaturePanel />}
+        {tab === 'audit' && <AuditLogsPanel />}
       </main>
     </div>
   )

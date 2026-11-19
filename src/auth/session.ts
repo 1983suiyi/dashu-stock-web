@@ -36,6 +36,7 @@ export type SessionValue = {
     newPassword: string,
   ) => Promise<ActionResult>
   logout: () => Promise<void>
+  deleteAccount: (password: string) => Promise<ActionResult>
 }
 
 export const SessionContext = createContext<SessionValue | null>(null)

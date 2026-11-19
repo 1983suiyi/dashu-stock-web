@@ -92,9 +92,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setUser(null)
   }, [])
 
+  const deleteAccount = useCallback<SessionValue['deleteAccount']>(async (password) => {
+    const result = await apiSend<{ deleted: boolean }>(
+      '/api/auth/delete-account',
+      'POST',
+      { password },
+    )
+    if (!result.ok) return { ok: false, message: result.error.message }
+    setUser(null)
+    return { ok: true }
+  }, [])
+
   const value = useMemo<SessionValue>(
-    () => ({ user, loading, refresh, login, register, sendCode, resetPassword, logout }),
-    [user, loading, refresh, login, register, sendCode, resetPassword, logout],
+    () => ({ user, loading, refresh, login, register, sendCode, resetPassword, logout, deleteAccount }),
+    [user, loading, refresh, login, register, sendCode, resetPassword, logout, deleteAccount],
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

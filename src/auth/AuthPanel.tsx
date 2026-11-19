@@ -225,6 +225,15 @@ export function AuthPanel({
         <button type="submit" disabled={busy}>
           {busy ? '处理中…' : MODE_LABEL[mode]}
         </button>
+
+        {mode === 'register' && (
+          <p className="helper-text" style={{ textAlign: 'center', fontSize: '0.82rem', marginTop: '0.75rem' }}>
+            注册即表示你已阅读并同意
+            <a href="/terms.html" target="_blank" rel="noopener noreferrer">《用户协议》</a>
+            与
+            <a href="/privacy.html" target="_blank" rel="noopener noreferrer">《隐私政策》</a>
+          </p>
+        )}
       </form>
     </div>
   )
