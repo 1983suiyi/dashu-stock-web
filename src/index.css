@@ -1422,6 +1422,17 @@ button:disabled {
   fill: #dce6f6;
 }
 
+.valuation-loss-range {
+  fill: rgba(148, 163, 184, 0.14);
+  stroke: rgba(148, 163, 184, 0.3);
+  stroke-dasharray: 4 3;
+}
+
+.valuation-loss-label {
+  fill: rgba(148, 163, 184, 0.75);
+  font-size: 11px;
+}
+
 .valuation-tooltip {
   position: absolute;
   padding: 5px 9px;

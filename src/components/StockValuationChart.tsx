@@ -122,6 +122,22 @@ export const StockValuationChart = ({
     return ticks
   }, [points])
 
+  // 连续空值区间（亏损期，PE 无意义被置空），用于绘制灰色阴影
+  const lossRanges = useMemo(() => {
+    const ranges: { start: number; end: number }[] = []
+    let start = -1
+    values.forEach((value, index) => {
+      const isNull = typeof value !== 'number'
+      if (isNull && start === -1) start = index
+      if (!isNull && start !== -1) {
+        ranges.push({ start, end: index - 1 })
+        start = -1
+      }
+    })
+    if (start !== -1) ranges.push({ start, end: values.length - 1 })
+    return ranges
+  }, [values])
+
   // 最后一个有效点的位置，用于标记当前值
   const lastValidIndex = useMemo(() => {
     for (let index = values.length - 1; index >= 0; index -= 1) {
@@ -214,6 +230,33 @@ export const StockValuationChart = ({
           </text>
         ))}
 
+        {lossRanges.map((range, index) => {
+          const xStart = toX(range.start)
+          const xEnd = toX(range.end)
+          const halfStep = count <= 1 ? 0 : INNER_WIDTH / (count - 1) / 2
+          return (
+            <g key={`loss-${index}`}>
+              <rect
+                x={xStart - halfStep}
+                y={PADDING.top}
+                width={Math.max(1, xEnd - xStart + halfStep * 2)}
+                height={INNER_HEIGHT}
+                className="valuation-loss-range"
+              />
+              {range.end - range.start >= 2 && (
+                <text
+                  x={(xStart + xEnd) / 2}
+                  y={PADDING.top + 14}
+                  className="valuation-loss-label"
+                  textAnchor="middle"
+                >
+                  亏损期
+                </text>
+              )}
+            </g>
+          )
+        })}
+
         {range.min !== null && (
           <line
             x1={PADDING.left}
@@ -286,7 +329,9 @@ export const StockValuationChart = ({
         >
           <span>{points[hoverIndex]?.date ?? ''}</span>
           <strong>
-            {label} {typeof hoverValue === 'number' ? hoverValue.toFixed(2) : '—'}
+            {typeof hoverValue === 'number'
+              ? `${label} ${hoverValue.toFixed(2)}`
+              : `${label} 亏损期（无意义）`}
           </strong>
         </div>
       )}
