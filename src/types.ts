@@ -252,3 +252,64 @@ export type DataSourceMeta = {
   klineCount: number
   fetchedAt: string
 }
+
+/** 单根日线蜡烛 */
+export type Candle = {
+  date: string
+  open: number | null
+  close: number | null
+  high: number | null
+  low: number | null
+  volume: number | null
+}
+
+/** 指数日线历史响应（/api/index-history） */
+export type IndexHistoryResponse = {
+  symbol: string
+  candles: Candle[]
+  from: string | null
+  to: string | null
+  requestedYears: number
+  fetchedAt: string
+  cached?: boolean
+  error?: string
+}
+
+/** 牛熊顶底点（由指数收盘价序列自动识别） */
+export type CyclePivot = {
+  /** high=顶部，low=底部 */
+  type: 'high' | 'low'
+  /** 在日线序列中的下标 */
+  index: number
+  date: string
+  price: number
+}
+
+/** 由相邻顶底点归纳出的牛熊阶段 */
+export type MarketPhase = {
+  /** 阶段序号，从 1 开始 */
+  seq: number
+  /** bull=牛市（底部→顶部），bear=熊市（顶部→底部） */
+  kind: 'bull' | 'bear'
+  startDate: string
+  startPrice: number
+  endDate: string
+  endPrice: number
+  /** 区间涨跌幅（%） */
+  changePct: number
+  /** 区间交易日数 */
+  tradingDays: number
+  /** 区间自然日天数 */
+  calendarDays: number
+  /** 是否为仍在进行中的最后一段 */
+  ongoing: boolean
+}
+
+/** 牛熊识别结果 */
+export type MarketCycleResult = {
+  pivots: CyclePivot[]
+  phases: MarketPhase[]
+  /** 当前所处阶段（取 phases 最后一段） */
+  current: MarketPhase | null
+}
+

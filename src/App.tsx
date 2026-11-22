@@ -18,6 +18,7 @@ import {
 } from './lib/cycle'
 import { IndustryCycleChart } from './components/IndustryCycleChart'
 import { StockValuationChart } from './components/StockValuationChart'
+import { BullBearSection } from './components/BullBearSection'
 import { UserMenu } from './auth/UserMenu'
 import { syncSave } from './auth/sync'
 import { apiGet, apiSend } from './auth/api'
@@ -117,6 +118,7 @@ type WorkspaceView =
   | 'portfolioSummary'
   | 'industries'
   | 'cycle'
+  | 'bullbear'
   | 'archives'
   | 'ai'
 
@@ -221,6 +223,7 @@ const navItems: Array<{ key: WorkspaceView; label: string }> = [
   { key: 'portfolioSummary', label: '持仓汇总' },
   { key: 'industries', label: '细分行业' },
   { key: 'cycle', label: '周期行业' },
+  { key: 'bullbear', label: '牛熊阶段' },
   { key: 'archives', label: '归档' },
   { key: 'ai', label: 'AI' },
 ]
@@ -3726,6 +3729,7 @@ function App() {
         {activeView === 'portfolioSummary' && portfolioSummarySection}
         {activeView === 'industries' && industriesSection}
         {activeView === 'cycle' && cycleSection}
+        {activeView === 'bullbear' && <BullBearSection />}
         {activeView === 'archives' && archivesSection}
         {activeView === 'ai' && aiSection}
 

@@ -1743,3 +1743,295 @@ button:disabled {
   font-size: 0.85rem;
 }
 
+/* ===== 牛熊阶段页面 ===== */
+.up {
+  color: #ff8a8a;
+}
+
+.down {
+  color: #4ade80;
+}
+
+.subsection-title {
+  margin: 22px 0 10px;
+  color: #eff5ff;
+  font-size: 1rem;
+}
+
+.metric-card.bull {
+  border-color: rgba(255, 138, 138, 0.4);
+}
+
+.metric-card.bear {
+  border-color: rgba(74, 222, 128, 0.4);
+}
+
+/* 全周期总览 */
+.cycle-overview {
+  position: relative;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(143, 170, 220, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cycle-overview svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.index-band {
+  opacity: 0.5;
+}
+
+.index-band.bull {
+  fill: rgba(242, 109, 109, 0.13);
+}
+
+.index-band.bear {
+  fill: rgba(74, 222, 128, 0.12);
+}
+
+.index-band.ongoing {
+  opacity: 0.85;
+}
+
+.index-line {
+  fill: none;
+  stroke: #cfe0ff;
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+}
+
+.index-pivot-dot.high {
+  fill: #ff8a8a;
+  stroke: #0f1727;
+  stroke-width: 1;
+}
+
+.index-pivot-dot.low {
+  fill: #4ade80;
+  stroke: #0f1727;
+  stroke-width: 1;
+}
+
+.index-pivot-label {
+  font-size: 10px;
+}
+
+.index-pivot-label.high {
+  fill: #ff9d9d;
+}
+
+.index-pivot-label.low {
+  fill: #6ee79a;
+}
+
+.cycle-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: #91a7c6;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-item::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+.legend-item.bull {
+  color: #ff8a8a;
+}
+
+.legend-item.high {
+  color: #ff8a8a;
+}
+
+.legend-item.bear {
+  color: #4ade80;
+}
+
+.legend-item.low {
+  color: #4ade80;
+}
+
+/* 阶段表 */
+.cycle-phase-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.cycle-phase-table th,
+.cycle-phase-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(143, 170, 220, 0.12);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.cycle-phase-table th {
+  color: #91a7c6;
+  font-weight: 500;
+}
+
+.cycle-badge.bull {
+  border-color: rgba(255, 138, 138, 0.5);
+  color: #ff9d9d;
+}
+
+.cycle-badge.bear {
+  border-color: rgba(74, 222, 128, 0.5);
+  color: #6ee79a;
+}
+
+/* 顶底点 K 线卡片 */
+.pivot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.pivot-card {
+  padding: 12px;
+  border: 1px solid rgba(143, 170, 220, 0.14);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.pivot-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.pivot-card-head strong {
+  color: #f4f7ff;
+}
+
+.pivot-price {
+  margin-left: auto;
+  color: #cfe0ff;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 蜡烛图 */
+.candle-chart {
+  position: relative;
+}
+
+.candle-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.candle-grid {
+  stroke: rgba(143, 170, 220, 0.12);
+  stroke-width: 1;
+}
+
+.candle-axis {
+  fill: #7f95b5;
+  font-size: 10px;
+}
+
+.candle-wick {
+  stroke-width: 1;
+}
+
+.candle-up {
+  stroke: #ff8a8a;
+  fill: #ff8a8a;
+}
+
+.candle-down {
+  stroke: #4ade80;
+  fill: #4ade80;
+}
+
+.candle-up .candle-body {
+  fill: #ff8a8a;
+}
+
+.candle-down .candle-body {
+  fill: #4ade80;
+}
+
+.candle-vol {
+  opacity: 0.5;
+}
+
+.candle-vol.up {
+  fill: #ff8a8a;
+}
+
+.candle-vol.down {
+  fill: #4ade80;
+}
+
+.candle-mark {
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+.candle-mark.high {
+  stroke: rgba(255, 138, 138, 0.6);
+}
+
+.candle-mark.low {
+  stroke: rgba(74, 222, 128, 0.6);
+}
+
+.candle-mark-dot.high {
+  fill: #ff8a8a;
+  stroke: #0f1727;
+  stroke-width: 1;
+}
+
+.candle-mark-dot.low {
+  fill: #4ade80;
+  stroke: #0f1727;
+  stroke-width: 1;
+}
+
+.candle-hover-line {
+  stroke: rgba(219, 230, 249, 0.45);
+  stroke-width: 1;
+}
+
+.candle-tooltip {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  padding: 6px 10px;
+  border: 1px solid rgba(143, 170, 220, 0.28);
+  border-radius: 10px;
+  background: rgba(9, 18, 31, 0.94);
+  color: #dce6f6;
+  font-size: 0.78rem;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.candle-tooltip strong {
+  display: block;
+  color: #f4f7ff;
+}
+
+

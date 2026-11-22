@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react'
 import { queryKline } from './server/kline.mjs'
 import { getIndustryCycle } from './server/industry-cycle.mjs'
 import { getStockValuation } from './server/stock-valuation.mjs'
+import { queryIndexHistory } from './server/index-history.mjs'
 
 /**
  * 开发环境复用生产环境的接口逻辑，避免维护两份实现。
@@ -69,6 +70,20 @@ const klineApiPlugin = (): Plugin => ({
           .catch((error: unknown) =>
             sendJson(500, {
               error: `个股估值历史异常：${error instanceof Error ? error.message : String(error)}`,
+            }),
+          )
+        return
+      }
+
+      if (url.pathname.startsWith('/api/index-history')) {
+        queryIndexHistory(
+          url.searchParams.get('symbol') ?? 'sh000001',
+          url.searchParams.get('years') ?? undefined,
+        )
+          .then((payload) => sendJson(200, payload))
+          .catch((error: unknown) =>
+            sendJson(500, {
+              error: `指数历史异常：${error instanceof Error ? error.message : String(error)}`,
             }),
           )
         return

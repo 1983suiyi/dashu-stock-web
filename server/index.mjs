@@ -10,6 +10,7 @@ import { queryKline } from './kline.mjs'
 import { getPbFloors } from './pb-floor.mjs'
 import { getIndustryCycle } from './industry-cycle.mjs'
 import { getStockValuation } from './stock-valuation.mjs'
+import { queryIndexHistory } from './index-history.mjs'
 import { handleAccountApi } from './api.mjs'
 
 const PORT = Number(process.env.PORT || 8787)
@@ -135,6 +136,21 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       sendJson(res, 500, {
         error: `个股估值历史异常：${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+    return
+  }
+
+  if (url.pathname === '/api/index-history') {
+    try {
+      const result = await queryIndexHistory(
+        url.searchParams.get('symbol') ?? 'sh000001',
+        url.searchParams.get('years'),
+      )
+      sendJson(res, 200, result)
+    } catch (error) {
+      sendJson(res, 500, {
+        error: `指数历史异常：${error instanceof Error ? error.message : String(error)}`,
       })
     }
     return
