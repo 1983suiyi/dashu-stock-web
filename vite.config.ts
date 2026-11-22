@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
-import { queryKline } from './server/kline.mjs'
+import { queryIndexSnapshot, queryKline } from './server/kline.mjs'
 import { getIndustryCycle } from './server/industry-cycle.mjs'
 import { getStockValuation } from './server/stock-valuation.mjs'
 import { queryIndexHistory } from './server/index-history.mjs'
@@ -84,6 +84,17 @@ const klineApiPlugin = (): Plugin => ({
           .catch((error: unknown) =>
             sendJson(500, {
               error: `指数历史异常：${error instanceof Error ? error.message : String(error)}`,
+            }),
+          )
+        return
+      }
+
+      if (url.pathname.startsWith('/api/index-snapshot')) {
+        queryIndexSnapshot(url.searchParams.get('symbol') ?? 'sh000001')
+          .then((payload) => sendJson(200, payload))
+          .catch((error: unknown) =>
+            sendJson(500, {
+              error: `指数快照异常：${error instanceof Error ? error.message : String(error)}`,
             }),
           )
         return

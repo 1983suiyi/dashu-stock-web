@@ -203,6 +203,8 @@ export const IndexCycleChart = ({ candles, phases, pivots, height = 300 }: Props
         <div className="cycle-tooltip">
           <span>{hover.date}</span>
           <strong>收盘 {hover.close?.toFixed(2) ?? '—'}</strong>
+          <strong>最高 {hover.high?.toFixed(2) ?? '—'}</strong>
+          <strong>最低 {hover.low?.toFixed(2) ?? '—'}</strong>
         </div>
       )}
     </div>

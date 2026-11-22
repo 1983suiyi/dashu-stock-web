@@ -59,17 +59,16 @@ export const SHANGHAI_INDEX_SYMBOL = 'sh000001'
 
 /**
  * 拉取上证指数快照（当前点位 + 近一年高低）。
- * 复用后端 /api/kline 代理：指数符号已满足 sh + 6 位代码的校验，无需新增接口。
+ * 使用轻量指数快照接口，不触发个股历史低点 K 线请求。
  */
 export const fetchIndexSnapshot = async (
   symbol: string = SHANGHAI_INDEX_SYMBOL,
 ): Promise<KlineResult | null> => {
   try {
-    const params = new URLSearchParams({ codes: symbol, days: '30' })
-    const response = await fetch(`/api/kline?${params.toString()}`)
+    const params = new URLSearchParams({ symbol })
+    const response = await fetch(`/api/index-snapshot?${params.toString()}`)
     if (!response.ok) return null
-    const payload = (await response.json()) as Partial<KlineBatch>
-    return payload.data?.[symbol] ?? null
+    return (await response.json()) as KlineResult | null
   } catch {
     return null
   }

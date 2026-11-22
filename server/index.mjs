@@ -6,7 +6,7 @@ import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { queryKline } from './kline.mjs'
+import { queryIndexSnapshot, queryKline } from './kline.mjs'
 import { getPbFloors } from './pb-floor.mjs'
 import { getIndustryCycle } from './industry-cycle.mjs'
 import { getStockValuation } from './stock-valuation.mjs'
@@ -151,6 +151,20 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       sendJson(res, 500, {
         error: `指数历史异常：${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+    return
+  }
+
+  if (url.pathname === '/api/index-snapshot') {
+    try {
+      const result = await queryIndexSnapshot(
+        url.searchParams.get('symbol') ?? 'sh000001',
+      )
+      sendJson(res, 200, result)
+    } catch (error) {
+      sendJson(res, 500, {
+        error: `指数快照异常：${error instanceof Error ? error.message : String(error)}`,
       })
     }
     return

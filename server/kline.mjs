@@ -117,6 +117,34 @@ const fetchBatch = async (symbols) => {
   }
 }
 
+const INDEX_QUOTE_CACHE_TTL_MS = 30_000
+const indexQuoteCache = new Map()
+const indexQuoteRequests = new Map()
+
+/** 只拉指数行情快照，避免自动刷新时重复请求历史 K 线。 */
+export const queryIndexSnapshot = async (rawSymbol = 'sh000001') => {
+  const symbol = String(rawSymbol ?? '').trim()
+  if (!SYMBOL_PATTERN.test(symbol)) return null
+
+  const cached = indexQuoteCache.get(symbol)
+  if (cached && Date.now() - cached.at < INDEX_QUOTE_CACHE_TTL_MS) {
+    return cached.value
+  }
+
+  const pending = indexQuoteRequests.get(symbol)
+  if (pending) return pending
+
+  const request = fetchBatch([symbol])
+    .then((entries) => entries[symbol] ?? null)
+    .then((value) => {
+      indexQuoteCache.set(symbol, { at: Date.now(), value })
+      return value
+    })
+    .finally(() => indexQuoteRequests.delete(symbol))
+  indexQuoteRequests.set(symbol, request)
+  return request
+}
+
 const beginDateOf = (days) => {
   const d = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
   const year = d.getFullYear()

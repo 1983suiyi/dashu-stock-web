@@ -640,6 +640,8 @@ const saveMarketCache = (cache: MarketCache) => {
 }
 
 /** 上证指数快照缓存结构 */
+const INDEX_REFRESH_INTERVAL_MS = 60_000
+
 type IndexCache = {
   date: string
   snapshot: IndexSnapshot
@@ -723,6 +725,7 @@ function App() {
   const [warning, setWarning] = useState('')
   const [dataMeta, setDataMeta] = useState<DataSourceMeta | null>(null)
   const [indexSnapshot, setIndexSnapshot] = useState<IndexSnapshot | null>(null)
+  const [indexUpdatedAt, setIndexUpdatedAt] = useState<Date | null>(null)
   const [marketTemperature, setMarketTemperature] = useState<
     MarketTemperatureRecord[]
   >(() => loadMarketTemperature())
@@ -745,6 +748,7 @@ function App() {
     }
   }, [])
   const [indexLoading, setIndexLoading] = useState(false)
+  const indexRefreshInFlightRef = useRef(false)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
   const [fullKlineCompleted, setFullKlineCompleted] = useState(false)
@@ -1491,8 +1495,10 @@ function App() {
     }
   }
 
-  // 拉取上证指数快照：复用 /api/kline 代理，返回当前点位与近一年高低
+  // 拉取上证指数快照：轻量接口只请求报价，不拉历史 K 线。
   const refreshIndexSnapshot = async (): Promise<boolean> => {
+    if (indexRefreshInFlightRef.current) return false
+    indexRefreshInFlightRef.current = true
     setIndexLoading(true)
     try {
       const entry = await fetchIndexSnapshot()
@@ -1503,9 +1509,11 @@ function App() {
         low1y: entry.low1y,
       }
       setIndexSnapshot(snapshot)
+      setIndexUpdatedAt(new Date())
       saveIndexCache({ date: todayText(), snapshot })
       return true
     } finally {
+      indexRefreshInFlightRef.current = false
       setIndexLoading(false)
     }
   }
@@ -1584,16 +1592,28 @@ function App() {
     void fetchAllRef.current()
   }, [])
 
-  // 挂载时：上证指数快照当天有缓存直接用，否则拉取一次
+  // 挂载时先显示当天缓存，再每分钟自动更新；标签页隐藏时暂停请求。
   const indexFetchRef = useRef<() => Promise<boolean>>(async () => false)
   indexFetchRef.current = refreshIndexSnapshot
   useEffect(() => {
     const cached = loadIndexCache()
-    if (cached) {
-      setIndexSnapshot(cached.snapshot)
-      return
+    if (cached) setIndexSnapshot(cached.snapshot)
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void indexFetchRef.current()
+      }
     }
-    void indexFetchRef.current()
+    refreshWhenVisible()
+    const timer = window.setInterval(
+      refreshWhenVisible,
+      INDEX_REFRESH_INTERVAL_MS,
+    )
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
   }, [])
 
   const handleFillKline = async () => {
@@ -2270,7 +2290,7 @@ function App() {
                     (upperIndexBand
                       ? `反之反弹至 ${upperIndexBand.label} 区间应减回 ${upperIndexBand.maxPct}%。`
                       : '')
-                  : '暂无上证指数数据，请点击「刷新指数」或「拉取最新数据」。'}
+                  : '暂无上证指数数据，正在自动获取。'}
               </p>
             </div>
 
@@ -2299,13 +2319,24 @@ function App() {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => void refreshIndexSnapshot()}
-              disabled={indexLoading}
-            >
-              {indexLoading ? '刷新中…' : '刷新指数'}
-            </button>
+            <div className="index-auto-refresh" role="status">
+              <span
+                className={`index-refresh-indicator${indexLoading ? ' loading' : ''}`}
+                aria-hidden="true"
+              />
+              <span>
+                自动刷新：每 {INDEX_REFRESH_INTERVAL_MS / 1000} 秒
+                {indexLoading
+                  ? ' · 正在更新'
+                  : indexUpdatedAt
+                    ? ` · 最近更新 ${indexUpdatedAt.toLocaleTimeString('zh-CN', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      })}`
+                    : ' · 等待首次更新'}
+              </span>
+            </div>
           </div>
 
           <div className="table-wrap sticky-head index-position-table-wrap">

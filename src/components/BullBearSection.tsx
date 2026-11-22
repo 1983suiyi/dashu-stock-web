@@ -226,23 +226,33 @@ export const BullBearSection = () => {
             牛熊顶底点 K 线（{cycle.pivots.length} 个，最新在前）
           </h3>
           <div className="pivot-grid">
-            {reversedPivots.map((pivot) => (
-              <article key={`${pivot.date}-${pivot.type}`} className="pivot-card">
-                <div className="pivot-card-head">
-                  <span className={`cycle-badge ${pivot.type === 'high' ? 'bear' : 'bull'}`}>
-                    {pivot.type === 'high' ? '顶' : '底'}
-                  </span>
-                  <strong>{pivot.date}</strong>
-                  <span className="pivot-price">{pivot.price.toFixed(2)}</span>
-                </div>
-                <CandlestickChart
-                  candles={pivotWindow(candles, pivot, windowDays)}
-                  highlightDate={pivot.date}
-                  highlightType={pivot.type}
-                  height={180}
-                />
-              </article>
-            ))}
+            {reversedPivots.map((pivot) => {
+              const pivotCandle = candles[pivot.index]
+              return (
+                <article key={`${pivot.date}-${pivot.type}`} className="pivot-card">
+                  <div className="pivot-card-head">
+                    <span className={`cycle-badge ${pivot.type === 'high' ? 'bear' : 'bull'}`}>
+                      {pivot.type === 'high' ? '顶' : '底'}
+                    </span>
+                    <strong>{pivot.date}</strong>
+                    <span className="pivot-price">
+                      收盘转折 {pivot.price.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="pivot-candle-values">
+                    <span>收盘 <strong>{pivotCandle?.close?.toFixed(2) ?? '—'}</strong></span>
+                    <span>最高 <strong>{pivotCandle?.high?.toFixed(2) ?? '—'}</strong></span>
+                    <span>最低 <strong>{pivotCandle?.low?.toFixed(2) ?? '—'}</strong></span>
+                  </div>
+                  <CandlestickChart
+                    candles={pivotWindow(candles, pivot, windowDays)}
+                    highlightDate={pivot.date}
+                    highlightType={pivot.type}
+                    height={180}
+                  />
+                </article>
+              )
+            })}
           </div>
         </>
       )}
