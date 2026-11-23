@@ -583,6 +583,20 @@ button:disabled {
   box-shadow: inset 0 -1px 0 rgba(143, 170, 220, 0.14);
 }
 
+/* 首列固定：窄屏横向滚动时仍能看到股票名称与代码 */
+.sticky-col thead th:first-child,
+.sticky-col tbody td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 6;
+  background: #0d1727;
+  box-shadow: inset -1px 0 0 rgba(143, 170, 220, 0.14);
+}
+
+.sticky-col thead th:first-child {
+  z-index: 9;
+}
+
 .toggle {
   display: inline-flex;
   align-items: center;
@@ -2100,4 +2114,65 @@ button:disabled {
 .candle-tooltip strong {
   display: block;
   color: #f4f7ff;
+}
+
+/* ---------- 移动端适配：窄屏（≤700px） ---------- */
+@media (max-width: 700px) {
+  .workspace-shell {
+    width: calc(100% - 16px);
+    padding-top: 12px;
+  }
+
+  .panel,
+  .hero-panel {
+    padding: 16px;
+  }
+
+  .table-wrap.tall {
+    max-height: 68vh;
+  }
+
+  /* 图表文字按 viewBox 等比缩放，窄屏必须放大 viewBox 内字号才可读 */
+  .cycle-axis {
+    font-size: 30px;
+  }
+
+  .index-pivot-label {
+    font-size: 28px;
+  }
+
+  .candle-axis {
+    font-size: 22px;
+  }
+
+  .valuation-axis,
+  .valuation-loss-label {
+    font-size: 20px;
+  }
+
+  /* 顶底卡片：320px 固定轨道在窄屏会撑出横向滚动 */
+  .pivot-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pivot-card-head {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  /* 风险气泡收窄，避免从表格右侧弹出时超出屏幕 */
+  .risk-bubble {
+    width: min(260px, calc(100vw - 70px));
+    max-height: 50vh;
+    overflow-y: auto;
+  }
+}
+
+/* ---------- 触摸设备：以点按聚焦替代悬停查看 ---------- */
+@media (hover: none) {
+  .sort-button:focus .sort-tooltip,
+  .sort-button:active .sort-tooltip {
+    opacity: 1;
+    visibility: visible;
+  }
 }

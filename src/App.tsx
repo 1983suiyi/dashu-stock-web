@@ -3002,7 +3002,7 @@ function App() {
         <span className="helper-text">共 {visibleStocks.length} 条</span>
       </div>
 
-      <div className="table-wrap tall sticky-head">
+      <div className="table-wrap tall sticky-head sticky-col">
         <table>
           <thead>
             <tr>

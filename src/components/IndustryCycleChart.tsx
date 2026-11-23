@@ -111,13 +111,21 @@ export const IndustryCycleChart = ({ industry, dates, series, stats }: Props) =>
     return null
   }, [series])
 
-  const handleMove = (event: React.MouseEvent<SVGRectElement>) => {
+  const moveTo = (clientX: number) => {
     const rect = svgRef.current?.getBoundingClientRect()
     if (!rect || rect.width === 0 || count === 0) return
-    const svgX = ((event.clientX - rect.left) / rect.width) * VIEW_WIDTH
+    const svgX = ((clientX - rect.left) / rect.width) * VIEW_WIDTH
     const ratio = (svgX - PADDING.left) / INNER_WIDTH
     const index = Math.round(ratio * (count - 1))
     setHoverIndex(Math.min(count - 1, Math.max(0, index)))
+  }
+
+  const handleMove = (event: React.MouseEvent<SVGRectElement>) => moveTo(event.clientX)
+
+  /** 触摸设备无法悬停，改用点按/拖动查看 */
+  const handleTouch = (event: React.TouchEvent<SVGRectElement>) => {
+    const touch = event.touches[0]
+    if (touch) moveTo(touch.clientX)
   }
 
   if (scale === null) {
@@ -238,6 +246,8 @@ export const IndustryCycleChart = ({ industry, dates, series, stats }: Props) =>
           fill="transparent"
           onMouseMove={handleMove}
           onMouseLeave={() => setHoverIndex(null)}
+          onTouchStart={handleTouch}
+          onTouchMove={handleTouch}
         />
       </svg>
 
