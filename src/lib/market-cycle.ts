@@ -9,6 +9,14 @@ import type {
 /** 上证指数在腾讯行情的符号 */
 export const SHANGHAI_INDEX_SYMBOL = 'sh000001'
 
+/** 牛熊阶段页支持的代表性宽基指数 */
+export const MARKET_INDEX_OPTIONS = [
+  { symbol: SHANGHAI_INDEX_SYMBOL, name: '上证指数' },
+  { symbol: 'sz399001', name: '深证成指' },
+  { symbol: 'sz399006', name: '创业板指' },
+  { symbol: 'sh000688', name: '科创50' },
+] as const
+
 /** 默认反转阈值：价格自高点回撤 / 自低点反弹达到 20% 才确认顶/底 */
 export const DEFAULT_REVERSAL_THRESHOLD = 0.2
 

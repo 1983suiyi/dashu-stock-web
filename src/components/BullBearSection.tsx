@@ -3,9 +3,9 @@ import type { Candle, IndexHistoryResponse } from '../types'
 import {
   buildMarketCycle,
   fetchIndexHistory,
+  MARKET_INDEX_OPTIONS,
   monthsToTradingDays,
   pivotWindow,
-  SHANGHAI_INDEX_SYMBOL,
 } from '../lib/market-cycle'
 import { CandlestickChart } from './CandlestickChart'
 import { IndexCycleChart } from './IndexCycleChart'
@@ -25,22 +25,25 @@ const durationText = (calendarDays: number) => {
 }
 
 /**
- * 「牛熊阶段」页面：基于上证指数日线自动识别牛熊顶底，展示当前阶段、
+ * 「牛熊阶段」页面：基于所选指数日线自动识别牛熊顶底，展示当前阶段、
  * 历史阶段列表，以及每个顶/底点附近的 K 线窗口。
  */
 export const BullBearSection = () => {
+  const [symbol, setSymbol] = useState(MARKET_INDEX_OPTIONS[0].symbol)
   const [data, setData] = useState<IndexHistoryResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [thresholdPct, setThresholdPct] = useState(THRESHOLD_OPTIONS[0])
   const [windowMonths, setWindowMonths] = useState(WINDOW_OPTIONS[1])
   const [attempt, setAttempt] = useState(0)
+  const selectedIndex = MARKET_INDEX_OPTIONS.find((index) => index.symbol === symbol)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
-    fetchIndexHistory(SHANGHAI_INDEX_SYMBOL, 20)
+    setData(null)
+    fetchIndexHistory(symbol, 20)
       .then((payload) => {
         if (cancelled) return
         if (payload.error && payload.candles.length === 0) {
@@ -61,7 +64,7 @@ export const BullBearSection = () => {
     return () => {
       cancelled = true
     }
-  }, [attempt])
+  }, [attempt, symbol])
 
   const candles = useMemo<Candle[]>(() => data?.candles ?? [], [data])
   const cycle = useMemo(
@@ -77,13 +80,23 @@ export const BullBearSection = () => {
       <div className="section-title">
         <h2>牛熊阶段</h2>
         <p>
-          以上证指数日线收盘价为基准，按「自高点回撤 / 自低点反弹」达到阈值自动识别牛熊顶底：
+          以所选指数（日线收盘价）为基准，按「自高点回撤 / 自低点反弹」达到阈值自动识别牛熊顶底：
           低点 → 高点为牛市，高点 → 低点为熊市。下方列出每个顶/底点附近的 K 线窗口，
           便于回看当时的市场形态与位置。
         </p>
       </div>
 
       <div className="action-row">
+        <label className="inline-search">
+          <span>指数</span>
+          <select value={symbol} onChange={(event) => setSymbol(event.target.value as typeof symbol)}>
+            {MARKET_INDEX_OPTIONS.map((index) => (
+              <option key={index.symbol} value={index.symbol}>
+                {index.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="inline-search">
           <span>反转阈值</span>
           <select
@@ -141,7 +154,7 @@ export const BullBearSection = () => {
       )}
 
       {loading && !data && (
-        <p className="helper-text">正在获取上证指数近 20 年日线数据…</p>
+        <p className="helper-text">正在获取{selectedIndex?.name ?? '所选指数'}近 20 年日线数据…</p>
       )}
 
       {data && cycle.current && (
@@ -171,6 +184,7 @@ export const BullBearSection = () => {
           </div>
 
           <IndexCycleChart
+            indexName={selectedIndex?.name ?? '指数'}
             candles={candles}
             phases={cycle.phases}
             pivots={cycle.pivots}
@@ -223,7 +237,7 @@ export const BullBearSection = () => {
           </div>
 
           <h3 className="subsection-title">
-            牛熊顶底点 K 线（{cycle.pivots.length} 个，最新在前）
+            {selectedIndex?.name ?? '指数'}牛熊顶底点 K 线（{cycle.pivots.length} 个，最新在前）
           </h3>
           <div className="pivot-grid">
             {reversedPivots.map((pivot) => {
@@ -255,6 +269,9 @@ export const BullBearSection = () => {
             })}
           </div>
         </>
+      )}
+      {data && !cycle.current && (
+        <p className="helper-text">暂无足够的{selectedIndex?.name ?? '所选指数'}历史数据可识别牛熊阶段。</p>
       )}
     </section>
   )

@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import type { Candle, CyclePivot, MarketPhase } from '../types'
 
 type Props = {
+  indexName: string
   candles: Candle[]
   phases: MarketPhase[]
   pivots: CyclePivot[]
@@ -12,10 +13,10 @@ const VIEW_WIDTH = 900
 const PADDING = { top: 16, right: 58, bottom: 26, left: 10 }
 
 /**
- * 全周期指数走势总览：折线为上证指数收盘价，牛/熊阶段用底色区分，
+ * 全周期指数走势总览：折线为所选指数收盘价，牛/熊阶段用底色区分，
  * 并标注每个顶底点与当前所处位置。
  */
-export const IndexCycleChart = ({ candles, phases, pivots, height = 300 }: Props) => {
+export const IndexCycleChart = ({ indexName, candles, phases, pivots, height = 300 }: Props) => {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
 
@@ -100,7 +101,7 @@ export const IndexCycleChart = ({ candles, phases, pivots, height = 300 }: Props
         ref={svgRef}
         viewBox={`0 0 ${VIEW_WIDTH} ${height}`}
         role="img"
-        aria-label="上证指数牛熊阶段总览"
+        aria-label={`${indexName}牛熊阶段总览`}
       >
         {bands.map((band) =>
           band ? (
