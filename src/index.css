@@ -2166,6 +2166,72 @@ button:disabled {
     max-height: 50vh;
     overflow-y: auto;
   }
+
+  /* 个股诊断：压缩内边距，避免页面被拉长 */
+  .diagnostic-card {
+    padding: 14px;
+  }
+
+  .diagnostic-head {
+    gap: 10px;
+  }
+
+  .mini-metrics {
+    gap: 7px;
+    margin: 12px 0;
+  }
+
+  .mini-metrics span {
+    padding: 5px 9px;
+    font-size: 0.82rem;
+  }
+
+  /* 扫雷四项：窄屏两列排布，每项更紧凑 */
+  .risk-panel {
+    margin: 12px 0;
+    padding: 12px;
+  }
+
+  .risk-panel-head {
+    margin-bottom: 9px;
+  }
+
+  .risk-items {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .risk-item-row {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    padding: 8px 9px;
+  }
+
+  .risk-item-body {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .risk-item-label {
+    font-size: 0.82rem;
+  }
+
+  .risk-item-detail {
+    font-size: 0.72rem;
+    margin-top: 2px;
+    line-height: 1.4;
+  }
+
+  .risk-item-value {
+    margin-left: 26px;
+    font-size: 0.82rem;
+  }
+
+  .risk-icon {
+    width: 18px;
+    height: 18px;
+    font-size: 0.72rem;
+  }
 }
 
 /* ---------- 触摸设备：以点按聚焦替代悬停查看 ---------- */
