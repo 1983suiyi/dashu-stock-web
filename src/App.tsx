@@ -33,8 +33,10 @@ import {
   MAX_GOODWILL_RATIO,
   MAX_PLEDGE_RATIO,
   MAX_SCORE,
+  MIN_CASH_TO_PROFIT_RATIO,
   PB_FLOOR_FAR_PCT,
   PB_FLOOR_NEAR_PCT,
+  cashFlowRisk,
   computeMarketTemperature,
   deriveMarketSnapshot,
   matchesTripleLow,
@@ -108,6 +110,8 @@ const csvHeaders = [
   'lowPrice3y',
   'goodwillRatio',
   'pledgeRatio',
+  'operatingCashFlow',
+  'parentNetProfit',
   'isST',
 ]
 
@@ -194,6 +198,7 @@ type ScoreSortKey =
   | 'pledgeRatio'
   | 'goodwillRatio'
   | 'debtRatio'
+  | 'cashRatio'
   | 'eligible'
 
 type SortDirection = 'asc' | 'desc'
@@ -330,6 +335,8 @@ const parseCsv = (text: string): StockRecord[] => {
       dividendYield: parseNumberCell(get('dividendYield')),
       goodwillRatio: parseNumberCell(get('goodwillRatio')),
       pledgeRatio: parseNumberCell(get('pledgeRatio')),
+      operatingCashFlow: parseNumberCell(get('operatingCashFlow')),
+      parentNetProfit: parseNumberCell(get('parentNetProfit')),
       highPrice1y: parseNumberCell(get('highPrice1y')),
       lowPrice1y: parseNumberCell(get('lowPrice1y')),
       lowPrice3y: parseNumberCell(get('lowPrice3y')),
@@ -469,9 +476,9 @@ const pbFloorTitle = (stock: ScoredStock) => {
   return `距行业 PB 底 +${stock.pbVsFloorPct.toFixed(1)}%（${stock.industry} PB 底 ${stock.industryPbFloor.toFixed(2)}）`
 }
 
-/** 扫雷三项的结构化结果：资产负债率、商誉、股权质押 */
+/** 扫雷四项的结构化结果：资产负债率、商誉、股权质押、经营现金流 */
 type RiskItem = {
-  key: 'debt' | 'goodwill' | 'pledge'
+  key: 'debt' | 'goodwill' | 'pledge' | 'cashflow'
   label: string
   /** 右侧展示值，如「正常」「+4.0pp」「56.3%」 */
   value: string
@@ -479,6 +486,8 @@ type RiskItem = {
   detail: string
   /** true=触发硬过滤, false=通过, null=数据缺失 */
   triggered: boolean | null
+  /** 仅扣分（不剔除）时的扣分数，>0 表示该项拉低了扫雷宝分数 */
+  penalty?: number
 }
 
 const getRiskItems = (stock: ScoredStock): RiskItem[] => {
@@ -546,7 +555,68 @@ const getRiskItems = (stock: ScoredStock): RiskItem[] => {
     })
   }
 
+  // 4. 经营现金流质量（仅扣分，不参与硬过滤）
+  const cash = cashFlowRisk(stock.operatingCashFlow, stock.parentNetProfit)
+  if (cash.operatingCashFlow === null) {
+    items.push({
+      key: 'cashflow',
+      label: '经营现金流 / 归母净利润',
+      value: '数据缺失',
+      detail: `经营活动现金流净额与归母净利润取最新报告期；缺失时不计扣分`,
+      triggered: null,
+      penalty: 0,
+    })
+  } else if (cash.negative) {
+    items.push({
+      key: 'cashflow',
+      label: '经营现金流 / 归母净利润',
+      value: '经营现金流为负',
+      detail: `经营活动现金流净额 ${yi(cash.operatingCashFlow)} 亿元，为负说明主营在失血；仅扣分不剔除`,
+      triggered: false,
+      penalty: cash.penalty,
+    })
+  } else {
+    items.push({
+      key: 'cashflow',
+      label: '经营现金流 / 归母净利润',
+      value: cash.ratio === null ? '不适用' : `${cash.ratio.toFixed(2)}`,
+      detail:
+        cash.ratio === null
+          ? '归母净利润非正，现金含量不参与判定；经营现金流为正不扣分'
+          : `现金含量阈值 ${MIN_CASH_TO_PROFIT_RATIO}，低于阈值按差额扣分；经营现金流净额 ${yi(cash.operatingCashFlow)} 亿元`,
+      triggered: false,
+      penalty: cash.penalty,
+    })
+  }
+
   return items
+}
+
+/**
+ * 扫雷项的展示状态：is-danger=触发硬过滤，is-warn=仅扣分，is-unknown=数据缺失。
+ * 「仅扣分」的项不计入剔除计数，避免与硬过滤口径混淆。
+ */
+const riskItemClass = (item: RiskItem) => {
+  if (item.triggered === true) return 'is-danger'
+  if (item.triggered === null) return 'is-unknown'
+  return (item.penalty ?? 0) > 0 ? 'is-warn' : 'is-ok'
+}
+
+const riskItemIcon = (item: RiskItem) => {
+  if (item.triggered === true) return '!'
+  if (item.triggered === null) return '?'
+  return (item.penalty ?? 0) > 0 ? '~' : '✓'
+}
+
+const riskItemValue = (item: RiskItem) =>
+  (item.penalty ?? 0) > 0 ? `${item.value}（-${item.penalty} 分）` : item.value
+
+/** 评分表排雷列的四字徽标 */
+const RISK_DOT_LABELS: Record<RiskItem['key'], string> = {
+  debt: '债',
+  goodwill: '誉',
+  pledge: '质',
+  cashflow: '现',
 }
 
 /** 扫雷是否全部通过：复用 strategy.riskPassed（数据缺失按通过处理） */
@@ -1182,6 +1252,11 @@ function App() {
           return stock.goodwillRatio
         case 'debtRatio':
           return stock.debtRatio
+        case 'cashRatio': {
+          // 经营现金流为负时排到最差，便于按现金质量排序
+          const cash = cashFlowRisk(stock.operatingCashFlow, stock.parentNetProfit)
+          return cash.negative ? -1 : cash.ratio
+        }
         case 'eligible':
           return stock.eligible ? 1 : 0
         default:
@@ -1240,7 +1315,7 @@ function App() {
     gain3y:
       '三年内涨幅 = (现价 − 三年内最低价) ÷ 三年内最低价。三年内最低价由腾讯前复权日线逐只补齐。',
     mine:
-      '扫雷宝评分（满分 100）。基于商誉占净资产与股权质押比例连续扣分；任一 ≥ 20% 触发硬过滤。',
+      `扫雷宝评分（满分 100）。按商誉占净资产、股权质押比例与经营现金流质量连续扣分；商誉或质押 ≥ 20% 触发硬过滤并剔除，经营现金流问题只扣分不剔除。`,
     marketCap: '总市值（亿元），来自东方财富。',
     dividendYield:
       '股息率(%) = 近 12 个月已实施税前每 10 股派息 ÷ 10 ÷ 现价 × 100。未实施方案与未来日期不计入。',
@@ -1248,6 +1323,8 @@ function App() {
     goodwillRatio: '商誉占净资产比例(%)，最新报告期，来自东方财富 RPT_GOODWILL_STOCKDETAILS。',
     debtRatio:
       '资产负债率(%)，右侧小字为该值相对同行业中位数的偏离（百分点）。宽容上限 = 行业资产负债率中位数 × (1 + 宽容幅度，默认 15%)，超过上限不予入池。',
+    cashRatio:
+      `现金含量 = 经营活动现金流净额 / 归母净利润，最新报告期，来自东方财富经营现金流与业绩报表。低于 ${MIN_CASH_TO_PROFIT_RATIO} 按差额扣扫雷宝分数；经营现金流为负标「为负」，此时不计算比值。数据缺失按不扣分处理。`,
     eligible: '入池状态：通过 = 满足全部筛选条件；未通过 = 至少一项不满足。',
   }
 
@@ -2042,7 +2119,9 @@ function App() {
   }
 
   const exportScoreTable = () => {
-    const rows = scoredStocks.map((stock) => [
+    const rows = scoredStocks.map((stock) => {
+      const cash = cashFlowRisk(stock.operatingCashFlow, stock.parentNetProfit)
+      return [
       stock.code,
       stock.name,
       stock.sector,
@@ -2073,9 +2152,17 @@ function App() {
       fixed(stock.dividendYield),
       fixed(stock.goodwillRatio),
       fixed(stock.pledgeRatio),
+      fixed(
+        stock.operatingCashFlow === null ? null : stock.operatingCashFlow / 1e8,
+      ),
+      fixed(
+        stock.parentNetProfit === null ? null : stock.parentNetProfit / 1e8,
+      ),
+      cash.negative ? '为负' : fixed(cash.ratio),
       stock.eligible ? '通过' : '未通过',
       stock.notes.join(' / '),
-    ])
+      ]
+    })
     downloadCsv(
       '大数评分表.csv',
       toCsv(
@@ -2108,6 +2195,9 @@ function App() {
           '股息率(%)',
           '商誉占净资产(%)',
           '股权质押比例(%)',
+          '经营活动现金流(亿)',
+          '归母净利润(亿)',
+          '现金含量',
           '是否通过',
           '风险提示',
         ],
@@ -2502,8 +2592,10 @@ function App() {
           全部标的均返回后当天不再请求。当前仍有 {pendingKline} 只缺少一年或三年低点数据，可能是上游无可用历史记录。
         </p>
         <p className="helper-text">
-          当前已接入<strong>股息率</strong>、<strong>商誉占净资产</strong>与
-          <strong>股权质押比例</strong>；扫雷宝展示的是当前公开口径结果。股票池导入字段：
+          当前已接入<strong>股息率</strong>、<strong>商誉占净资产</strong>、
+          <strong>股权质押比例</strong>与<strong>经营现金流质量</strong>（现金含量 = 经营现金流净额 ÷
+          归母净利润）；商誉或质押 ≥ {MAX_GOODWILL_RATIO}% 会硬过滤剔除，经营现金流问题只扣扫雷宝分数。
+          股票池导入字段：
           <code>{csvHeaders.join(', ')}</code>
         </p>
       </section>
@@ -2701,7 +2793,7 @@ function App() {
                 return (
                   <div className="risk-panel">
                     <div className="risk-panel-head">
-                      <strong>扫雷三项</strong>
+                      <strong>扫雷四项</strong>
                       <span
                         className={
                           triggeredCount > 0
@@ -2711,33 +2803,25 @@ function App() {
                       >
                         {triggeredCount > 0
                           ? `${triggeredCount} 项触发，按规则暂时剔除`
-                          : '全部通过'}
+                          : '无硬过滤项'}
                       </span>
                     </div>
                     <div className="risk-items">
                       {riskItems.map((item) => (
                         <div
                           key={item.key}
-                          className={`risk-item-row ${
-                            item.triggered === true
-                              ? 'is-danger'
-                              : item.triggered === false
-                                ? 'is-ok'
-                                : 'is-unknown'
-                          }`}
+                          className={`risk-item-row ${riskItemClass(item)}`}
                         >
                           <span className="risk-icon" aria-hidden="true">
-                            {item.triggered === true
-                              ? '!'
-                              : item.triggered === false
-                                ? '✓'
-                                : '?'}
+                            {riskItemIcon(item)}
                           </span>
                           <div className="risk-item-body">
                             <div className="risk-item-label">{item.label}</div>
                             <div className="risk-item-detail">{item.detail}</div>
                           </div>
-                          <span className="risk-item-value">{item.value}</span>
+                          <span className="risk-item-value">
+                            {riskItemValue(item)}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -2938,6 +3022,7 @@ function App() {
               {renderScoreSortHeader('pledgeRatio', '质押率')}
               {renderScoreSortHeader('goodwillRatio', '商誉')}
               {renderScoreSortHeader('debtRatio', '资产负债率')}
+              {renderScoreSortHeader('cashRatio', '现金含量')}
               {renderScoreSortHeader('eligible', '状态')}
               <th>排雷</th>
             </tr>
@@ -2956,6 +3041,12 @@ function App() {
                 stock.debtRatio !== null && stock.industryDebtMedian !== null
                   ? stock.debtRatio - stock.industryDebtMedian
                   : null
+              const cash = cashFlowRisk(stock.operatingCashFlow, stock.parentNetProfit)
+              const cashText = cash.negative
+                ? '为负'
+                : cash.ratio === null
+                  ? '—'
+                  : cash.ratio.toFixed(2)
 
               return (
               <tr key={stock.code}>
@@ -3010,6 +3101,9 @@ function App() {
                     {stock.eligible ? '通过' : '未通过'}
                   </span>
                 </td>
+                <td className={cash.penalty > 0 ? 'cash-ratio danger' : 'cash-ratio'}>
+                  {cashText}
+                </td>
                 <td className="risk-cell">
                   <span
                     className={
@@ -3024,19 +3118,9 @@ function App() {
                     {riskItems.map((item) => (
                       <span
                         key={item.key}
-                        className={`risk-dot ${
-                          item.triggered === true
-                            ? 'is-danger'
-                            : item.triggered === false
-                              ? 'is-ok'
-                              : 'is-unknown'
-                        }`}
+                        className={`risk-dot ${riskItemClass(item)}`}
                       >
-                        {item.key === 'debt'
-                          ? '债'
-                          : item.key === 'goodwill'
-                            ? '誉'
-                            : '质'}
+                        {RISK_DOT_LABELS[item.key]}
                       </span>
                     ))}
                   </div>

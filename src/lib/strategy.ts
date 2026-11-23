@@ -77,14 +77,15 @@ export const gainOf = (price: number | null, low: number | null) => {
 const mineScoreOf = (
   goodwillRatio: number | null,
   pledgeRatio: number | null,
+  cashPenalty: number,
 ) => {
   const goodwill = goodwillRatio ?? 0
   const pledge = pledgeRatio ?? 0
 
-  // 公开口径下，先用商誉与质押做连续风险分：
+  // 公开口径下，用商誉、质押与经营现金流做连续风险分：
   // - 商誉 5% 以内不扣分，之后逐步降分；
   // - 质押 10% 以内不扣分，之后逐步降分；
-  // - 超过硬过滤线（20%）后继续快速降分。
+  // - 经营现金流质量由 cashFlowRisk 给出扣分（仅扣分，不剔除）。
   //
   // 这样既能保留高风险拦截，又不会让绝大部分样本都堆在 100 分。
   const goodwillPenalty =
@@ -92,7 +93,74 @@ const mineScoreOf = (
   const pledgePenalty =
     pledge <= 10 ? 0 : Math.min(30, (pledge - 10) * 2)
 
-  return Math.max(0, Math.round(100 - goodwillPenalty - pledgePenalty))
+  return Math.max(
+    0,
+    Math.round(100 - goodwillPenalty - pledgePenalty - cashPenalty),
+  )
+}
+
+/**
+ * 经营现金流质量口径。
+ *
+ * 现金含量 = 经营活动现金流净额 / 归母净利润，衡量「利润有多少是真金白银」。
+ * 只在净利润为正时才有意义：净利润为负或缺失时不算比值。
+ * 数据缺失与「经营现金流为正」一律不扣分，保证旧缓存与新拉取口径一致。
+ */
+export const MIN_CASH_TO_PROFIT_RATIO = 0.5
+/** 经营现金流为负的扣分（同时归母净利润也为负时按上限） */
+const CASHFLOW_NEGATIVE_PENALTY = 18
+const CASHFLOW_NEGATIVE_AND_LOSS_PENALTY = 25
+/** 现金含量低于阈值时的最大扣分 */
+const CASHFLOW_RATIO_MAX_PENALTY = 15
+
+export type CashFlowRisk = {
+  /** 经营活动现金流净额（元），缺失为 null */
+  operatingCashFlow: number | null
+  /** 现金含量，净利润非正或数据缺失时为 null */
+  ratio: number | null
+  /** 经营现金流是否为负 */
+  negative: boolean
+  /** 扫雷宝扣分（0~25），>0 表示仅扣分不剔除 */
+  penalty: number
+}
+
+export const cashFlowRisk = (
+  operatingCashFlow: number | null,
+  parentNetProfit: number | null,
+): CashFlowRisk => {
+  const ocf = operatingCashFlow ?? null
+  const profit = parentNetProfit ?? null
+
+  if (ocf === null) {
+    return { operatingCashFlow: null, ratio: null, negative: false, penalty: 0 }
+  }
+
+  if (ocf < 0) {
+    return {
+      operatingCashFlow: ocf,
+      ratio: null,
+      negative: true,
+      penalty:
+        profit !== null && profit < 0
+          ? CASHFLOW_NEGATIVE_AND_LOSS_PENALTY
+          : CASHFLOW_NEGATIVE_PENALTY,
+    }
+  }
+
+  if (profit === null || profit <= 0) {
+    return { operatingCashFlow: ocf, ratio: null, negative: false, penalty: 0 }
+  }
+
+  const ratio = ocf / profit
+  const penalty =
+    ratio >= MIN_CASH_TO_PROFIT_RATIO
+      ? 0
+      : Math.round(
+          ((MIN_CASH_TO_PROFIT_RATIO - ratio) / MIN_CASH_TO_PROFIT_RATIO) *
+            CASHFLOW_RATIO_MAX_PENALTY,
+        )
+
+  return { operatingCashFlow: ocf, ratio, negative: false, penalty }
 }
 
 const median = (values: number[]) => {
@@ -185,7 +253,12 @@ export const scoreStocks = (
       const peScore = toValuationScore(stock.pe, peLo, peHi)
       const { gain1y, priceScore } = priceScoreOf(stock.price, stock.lowPrice1y)
       const gain3y = gainOf(stock.price, stock.lowPrice3y)
-      const mineScore = mineScoreOf(stock.goodwillRatio, stock.pledgeRatio)
+      const cashRisk = cashFlowRisk(stock.operatingCashFlow, stock.parentNetProfit)
+      const mineScore = mineScoreOf(
+        stock.goodwillRatio,
+        stock.pledgeRatio,
+        cashRisk.penalty,
+      )
 
       const notes: string[] = []
       const missingFields: string[] = []
@@ -244,6 +317,13 @@ export const scoreStocks = (
       if (debtAboveIndustryMedian === false) notes.push('资产负债率在中位数宽容区间内')
       if (goodwillTooHigh) notes.push(`商誉占净资产过高(>=${MAX_GOODWILL_RATIO}%)`)
       if (pledgeTooHigh) notes.push(`股权质押比例过高(>=${MAX_PLEDGE_RATIO}%)`)
+      if (cashRisk.negative) {
+        notes.push('经营活动现金流为负，扫雷宝已扣分')
+      } else if (cashRisk.penalty > 0) {
+        notes.push(
+          `现金含量不足(经营现金流/净利润 < ${MIN_CASH_TO_PROFIT_RATIO})，扫雷宝已扣分`,
+        )
+      }
       if (stock.dividendYield !== null && stock.dividendYield <= config.minDividendYield) {
         notes.push('股息率低于阈值')
       }
