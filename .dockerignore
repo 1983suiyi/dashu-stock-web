@@ -1,0 +1,36 @@
+# 依赖与构建产物
+node_modules
+dist
+dist-ssr
+
+# 版本控制与编辑器
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# 本地环境变量与密钥（生产由平台注入）
+.env
+.env.*
+!.env.example
+
+# 本地数据库与缓存（容器内改由挂载卷 /data 提供）
+server/*.db
+server/*.db-wal
+server/*.db-shm
+server/backups
+server/*-cache.json
+
+# 日志与临时文件
+*.log
+*.tsbuildinfo
+
+# 文档与导出资料（不参与运行）
+docs
+scripts
+*.md
+大数投资_知识树.html
+大数投资_知识简图.svg
+大数投资_详细思维导图.html
+.trae-html-share-packages
