@@ -2169,7 +2169,7 @@ button:disabled {
 
   /* 个股诊断：压缩内边距，避免页面被拉长 */
   .diagnostic-card {
-    padding: 14px;
+    padding: 12px;
   }
 
   .diagnostic-head {
@@ -2189,25 +2189,26 @@ button:disabled {
   /* 扫雷四项：窄屏两列排布，每项更紧凑 */
   .risk-panel {
     margin: 12px 0;
-    padding: 12px;
+    padding: 10px;
   }
 
   .risk-panel-head {
     margin-bottom: 9px;
   }
 
+  /* 扫雷四项：用横向空间排两列以压缩纵向高度；容器过窄时 auto-fit 自动退回单列 */
   .risk-items {
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
     gap: 8px;
   }
 
-  /* 扫雷项：图标 + 标签 + 分数同一行，说明折到下一行，纵向更紧凑 */
   .risk-item-row {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    column-gap: 8px;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 6px;
     row-gap: 2px;
     align-items: center;
-    padding: 8px 10px;
+    padding: 8px;
   }
 
   /* 展开 body，让标签与说明直接参与栅格布局 */
@@ -2218,32 +2219,33 @@ button:disabled {
   .risk-icon {
     grid-column: 1;
     grid-row: 1;
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     margin-top: 0;
-    font-size: 0.72rem;
+    font-size: 0.68rem;
   }
 
   .risk-item-label {
     grid-column: 2;
     grid-row: 1;
-    font-size: 0.84rem;
+    font-size: 0.8rem;
   }
 
   .risk-item-value {
-    grid-column: 3;
-    grid-row: 1;
+    grid-column: 2;
+    grid-row: 2;
     margin-left: 0;
-    font-size: 0.84rem;
+    justify-self: start;
+    font-size: 0.78rem;
     white-space: nowrap;
   }
 
   .risk-item-detail {
-    grid-column: 2 / -1;
-    grid-row: 2;
+    grid-column: 1 / -1;
+    grid-row: 3;
     margin-top: 0;
-    font-size: 0.74rem;
-    line-height: 1.4;
+    font-size: 0.7rem;
+    line-height: 1.35;
   }
 }
 
