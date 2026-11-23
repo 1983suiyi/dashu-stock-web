@@ -118,6 +118,7 @@ const csvHeaders = [
 type WorkspaceView =
   | 'overview'
   | 'scores'
+  | 'diagnosis'
   | 'portfolio'
   | 'portfolioSummary'
   | 'industries'
@@ -224,6 +225,7 @@ const MARKET_TEMPERATURE_CACHE_KEY = 'dashu-market-temperature'
 const navItems: Array<{ key: WorkspaceView; label: string }> = [
   { key: 'overview', label: '市场概况' },
   { key: 'scores', label: '大数评分' },
+  { key: 'diagnosis', label: '个股诊断' },
   { key: 'portfolio', label: '持仓' },
   { key: 'portfolioSummary', label: '持仓汇总' },
   { key: 'industries', label: '细分行业' },
@@ -2600,7 +2602,7 @@ function App() {
         </p>
       </section>
 
-      <section className="panel two-columns">
+      <section className="panel">
         <div>
           <div className="section-title">
             <h2>规则配置</h2>
@@ -2726,12 +2728,26 @@ function App() {
             </p>
           </div>
         </div>
+      </section>
 
-        <div>
-          <div className="section-title">
-            <h2>个股诊断</h2>
-            <p>输入完整股票代码或名称后自动查询近一年最高价。默认已定位到贵州轮胎。</p>
-          </div>
+      <section className="section-grid">
+        {researchHighlights.map((item) => (
+          <article key={item.title} className="insight-card">
+            <h2>{item.title}</h2>
+            <p>{item.detail}</p>
+          </article>
+        ))}
+      </section>
+    </>
+  )
+
+  const diagnosisSection = (
+    <section className="panel">
+      <div>
+        <div className="section-title">
+          <h2>个股诊断</h2>
+          <p>输入完整股票代码或名称后自动查询近一年最高价。默认已定位到贵州轮胎。</p>
+        </div>
           <div className="control-grid single-column">
             <label>
               股票代码 / 名称
@@ -2897,16 +2913,6 @@ function App() {
           )}
         </div>
       </section>
-
-      <section className="section-grid">
-        {researchHighlights.map((item) => (
-          <article key={item.title} className="insight-card">
-            <h2>{item.title}</h2>
-            <p>{item.detail}</p>
-          </article>
-        ))}
-      </section>
-    </>
   )
 
   const scoreSection = (
@@ -3840,6 +3846,7 @@ function App() {
 
         {activeView === 'overview' && overviewSection}
         {activeView === 'scores' && scoreSection}
+        {activeView === 'diagnosis' && diagnosisSection}
         {activeView === 'portfolio' && portfolioSection}
         {activeView === 'portfolioSummary' && portfolioSummarySection}
         {activeView === 'industries' && industriesSection}
