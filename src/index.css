@@ -2197,40 +2197,53 @@ button:disabled {
   }
 
   .risk-items {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
   }
 
+  /* 扫雷项：图标 + 标签 + 分数同一行，说明折到下一行，纵向更紧凑 */
   .risk-item-row {
-    flex-wrap: wrap;
-    gap: 6px 8px;
-    padding: 8px 9px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: 8px;
+    row-gap: 2px;
+    align-items: center;
+    padding: 8px 10px;
   }
 
+  /* 展开 body，让标签与说明直接参与栅格布局 */
   .risk-item-body {
-    flex: 1 1 100%;
-    min-width: 0;
-  }
-
-  .risk-item-label {
-    font-size: 0.82rem;
-  }
-
-  .risk-item-detail {
-    font-size: 0.72rem;
-    margin-top: 2px;
-    line-height: 1.4;
-  }
-
-  .risk-item-value {
-    margin-left: 26px;
-    font-size: 0.82rem;
+    display: contents;
   }
 
   .risk-icon {
+    grid-column: 1;
+    grid-row: 1;
     width: 18px;
     height: 18px;
+    margin-top: 0;
     font-size: 0.72rem;
+  }
+
+  .risk-item-label {
+    grid-column: 2;
+    grid-row: 1;
+    font-size: 0.84rem;
+  }
+
+  .risk-item-value {
+    grid-column: 3;
+    grid-row: 1;
+    margin-left: 0;
+    font-size: 0.84rem;
+    white-space: nowrap;
+  }
+
+  .risk-item-detail {
+    grid-column: 2 / -1;
+    grid-row: 2;
+    margin-top: 0;
+    font-size: 0.74rem;
+    line-height: 1.4;
   }
 }
 
