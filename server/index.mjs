@@ -80,7 +80,13 @@ const serveStatic = async (res, pathname) => {
 }
 
 const server = createServer(async (req, res) => {
+  const start = Date.now()
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
+  res.on('finish', () => {
+    const ms = Date.now() - start
+    const tag = res.statusCode >= 500 ? 'ERR' : res.statusCode >= 400 ? 'WARN' : 'OK'
+    console.log(`[${tag}] ${req.method} ${url.pathname} -> ${res.statusCode} (${ms}ms)`)
+  })
 
   // 账号相关接口（/api/auth/* 与 /api/admin/*）
   if (await handleAccountApi(req, res, url)) return
