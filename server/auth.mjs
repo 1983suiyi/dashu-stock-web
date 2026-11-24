@@ -365,7 +365,7 @@ const resetPassword = ({ email, code, newPassword }, ip) => {
   }
 
   const row = db.prepare('SELECT id FROM users WHERE email = ?').get(mail)
-  if (!row) return { ok: false, code: 'INVALID_INPUT', message: '邮箱或验证码不正确' }
+  if (!row) return { ok: false, code: 'USER_NOT_FOUND', message: '该邮箱未注册，请先注册账号。' }
 
   const codeResult = consumeCode(mail, 'reset', code)
   if (!codeResult.ok) return codeResult
