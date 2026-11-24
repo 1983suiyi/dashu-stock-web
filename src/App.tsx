@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { defaultConfig, defaultMarketSnapshot, demoStocks } from './data/stocks'
 import { downloadCsv, toCsv } from './lib/csv'
-import { fetchRealMarketData, fetchStockByCode } from './lib/eastmoney'
+import { fetchStockByCode } from './lib/eastmoney'
 import { normalizeIndustry } from './lib/industry'
 import {
   applyKline,
@@ -43,7 +43,6 @@ import {
   pbBand,
   peBand,
   pickIndexPositionBand,
-  pickKlineCandidates,
   portfolioExposure,
   recommendPortfolio,
   riskPassed,
@@ -58,7 +57,6 @@ import type {
   MarketSnapshot,
   MarketTemperatureRecord,
   PortfolioHolding,
-  KlineResult,
   CycleStats,
   IndustryCycleResponse,
   ScoredStock,
@@ -215,10 +213,6 @@ const HOLDING_STORAGE_KEY = 'dashu-user-holdings'
 const CASH_BALANCE_STORAGE_KEY = 'dashu-cash-balance'
 const TOTAL_ASSETS_STORAGE_KEY = 'dashu-total-assets'
 const CAPITAL_EVENTS_STORAGE_KEY = 'dashu-capital-events'
-/** 全市场数据缓存：同一天内刷新页面直接复用，避免重复拉取 */
-const MARKET_CACHE_KEY = 'dashu-market-cache'
-/** 当天已补齐的 K 线结果，按代码增量保存，避免重复请求 */
-const DAILY_KLINE_CACHE_KEY = 'dashu-daily-kline-cache'
 const INDEX_CACHE_KEY = 'dashu-index-snapshot'
 const MARKET_TEMPERATURE_CACHE_KEY = 'dashu-market-temperature'
 
@@ -633,82 +627,26 @@ const isFinancialStock = (stock: ScoredStock) =>
 const normalize = (value: string) => value.trim().toLowerCase()
 const todayText = () => new Date().toISOString().slice(0, 10)
 
-/** 全市场数据缓存结构 */
-type MarketCache = {
-  date: string
-  fetchedAt: string
+type DailyMarketPayload = {
   stocks: StockRecord[]
-  meta: DataSourceMeta
-  market: MarketSnapshot
+  meta: DataSourceMeta | null
+  status: string
+  phase: string
+  runDate: string | null
+  failedCount: number
+  retryAt: number | null
+  lastError: string | null
+  updatedAt: number | null
 }
 
-type DailyKlineCache = {
-  date: string
-  days: number
-  entries: Record<string, KlineResult>
-  completed: boolean
-}
-
-const loadDailyKlineCache = (days: number): DailyKlineCache | null => {
-  try {
-    const raw = localStorage.getItem(DAILY_KLINE_CACHE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as DailyKlineCache
-    if (
-      parsed.date !== todayText() ||
-      parsed.days !== days ||
-      !parsed.entries ||
-      typeof parsed.entries !== 'object'
-    ) {
-      return null
-    }
-    return {
-      ...parsed,
-      completed: parsed.completed === true,
-    }
-  } catch {
-    return null
-  }
-}
-
-const createDailyKlineCache = (days: number): DailyKlineCache => ({
-  date: todayText(),
-  days,
-  entries: {},
-  completed: false,
-})
-
-const saveDailyKlineCache = (cache: DailyKlineCache): boolean => {
-  try {
-    localStorage.setItem(DAILY_KLINE_CACHE_KEY, JSON.stringify(cache))
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** 从 localStorage 加载当天缓存，若非当天或数据损坏则返回 null */
-const loadMarketCache = (): MarketCache | null => {
-  try {
-    const raw = localStorage.getItem(MARKET_CACHE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as MarketCache
-    if (parsed.date !== todayText()) return null
-    if (!Array.isArray(parsed.stocks) || parsed.stocks.length === 0) return null
-    if (!parsed.meta || !parsed.market) return null
-    return parsed
-  } catch {
-    return null
-  }
-}
-
-/** 将拉取结果写入 localStorage；超出容量时静默失败，内存态仍可用 */
-const saveMarketCache = (cache: MarketCache) => {
-  try {
-    localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(cache))
-  } catch {
-    // localStorage 超限（全市场数据可能较大），忽略，下次刷新会重新拉取
-  }
+const DAILY_MARKET_STATUS_LABELS: Record<string, string> = {
+  waiting: '等待每日定时任务',
+  fetching_market: '正在拉取全市场财务与估值数据',
+  fetching_klines: '正在补齐全市场 K 线',
+  retry_wait: '失败项将在 5 分钟后自动重试',
+  complete: '今日拉取完成',
+  complete_with_errors: '重试后仍有数据失败',
+  no_new_trading_day: '今日无新交易数据',
 }
 
 /** 上证指数快照缓存结构 */
@@ -793,9 +731,10 @@ function App() {
   const [stocks, setStocks] = useState<StockRecord[]>(demoStocks)
   const [config, setConfig] = useState<StrategyConfig>(defaultConfig)
   const [market, setMarket] = useState(defaultMarketSnapshot)
-  const [message, setMessage] = useState('当前使用内置演示数据。')
+  const [message, setMessage] = useState('正在读取服务端共享行情数据…')
   const [warning, setWarning] = useState('')
   const [dataMeta, setDataMeta] = useState<DataSourceMeta | null>(null)
+  const [marketJob, setMarketJob] = useState<DailyMarketPayload | null>(null)
   const [indexSnapshot, setIndexSnapshot] = useState<IndexSnapshot | null>(null)
   const [indexUpdatedAt, setIndexUpdatedAt] = useState<Date | null>(null)
   const [marketTemperature, setMarketTemperature] = useState<
@@ -823,7 +762,6 @@ function App() {
   const indexRefreshInFlightRef = useRef(false)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
-  const [fullKlineCompleted, setFullKlineCompleted] = useState(false)
   const [scoreScope, setScoreScope] = useState<ScoreScope>('all')
   const [excludeFinancial, setExcludeFinancial] = useState(false)
   const [onlyNearPbFloor, setOnlyNearPbFloor] = useState(false)
@@ -871,9 +809,6 @@ function App() {
   const [capitalTypeInput, setCapitalTypeInput] = useState<CapitalEventType>('入金')
   const [capitalAmountInput, setCapitalAmountInput] = useState('')
   const [capitalNoteInput, setCapitalNoteInput] = useState('')
-
-  // 用于在挂载 effect 中调用最新的 handleFetchAll，避免依赖闭包过期
-  const fetchAllRef = useRef<() => Promise<void>>(async () => {})
 
   useEffect(() => {
     try {
@@ -1185,17 +1120,6 @@ function App() {
       ).length,
     [scoredStocks],
   )
-  const fullKlineDoneForCurrentStocks = useMemo(() => {
-    if (!fullKlineCompleted) return false
-    const cache = loadDailyKlineCache(config.klineDays)
-    return Boolean(
-      cache?.completed &&
-        stocks.every((stock) => {
-          const symbol = toSymbol(stock.code)
-          return symbol !== null && Boolean(cache.entries[symbol])
-        }),
-    )
-  }, [config.klineDays, fullKlineCompleted, stocks])
   const visibleStocks = useMemo(() => {
     const keyword = normalize(scoreQuery)
     return scoredStocks.filter(
@@ -1528,50 +1452,7 @@ function App() {
   }
 
   const handleConfigChange = (key: keyof StrategyConfig, value: number) => {
-    if (key === 'klineDays') {
-      setFullKlineCompleted(
-        loadDailyKlineCache(value)?.completed ?? false,
-      )
-    }
     setConfig((current) => ({ ...current, [key]: value }))
-  }
-
-  const runKlineStep = async (universe: StockRecord[]) => {
-    const dailyCache =
-      loadDailyKlineCache(config.klineDays) ??
-      createDailyKlineCache(config.klineDays)
-    const stocksWithCachedKline = applyKline(universe, dailyCache.entries)
-    const candidates = pickKlineCandidates(
-      scoreStocks(
-        stocksWithCachedKline,
-        config,
-        historicalPbFloors ?? undefined,
-        historicalStockPbFloors ?? undefined,
-      ),
-      config,
-    )
-    const missingCandidates = candidates.filter((code) => {
-      const symbol = toSymbol(code)
-      return symbol !== null && !dailyCache.entries[symbol]
-    })
-
-    let failed: string[] = []
-    if (missingCandidates.length > 0) {
-      const result = await fetchKlines(
-        missingCandidates,
-        config.klineDays,
-        (done, total) => setProgress(`正在补齐候选 K 线：${done}/${total}`),
-      )
-      Object.assign(dailyCache.entries, result.data)
-      failed = result.failed
-      saveDailyKlineCache(dailyCache)
-    }
-
-    return {
-      stocks: applyKline(universe, dailyCache.entries),
-      count: Object.keys(dailyCache.entries).length,
-      failed,
-    }
   }
 
   // 拉取上证指数快照：轻量接口只请求报价，不拉历史 K 线。
@@ -1597,78 +1478,83 @@ function App() {
     }
   }
 
-  const handleFetchAll = async () => {
-    setLoading(true)
-    setWarning('')
-    setProgress('开始拉取…')
-    try {
-      const { stocks: universe, meta } = await fetchRealMarketData(setProgress)
-      const { stocks: enriched, count, failed } = await runKlineStep(universe)
-      const derivedMarket = deriveMarketSnapshot(enriched)
-      setStocks(enriched)
-      setMarket(derivedMarket)
-      // 同步刷新上证指数点位，供「按点位定仓位」模块使用
-      void refreshIndexSnapshot()
-      setDataMeta({ ...meta, klineCount: count })
-      setFullKlineCompleted(
-        loadDailyKlineCache(config.klineDays)?.completed ?? false,
-      )
-      setMessage(
-        `已接入最新数据：${meta.total} 只 A 股，东财交易日 ${meta.tradeDate}，` +
-          `其中 ${count} 只补齐了一年/三年低价，并已用腾讯快照刷新现价。`,
-      )
-      if (failed.length > 0) {
-        setWarning(`有 ${failed.length} 只候选未能取到 K 线，其涨幅得分暂缺。`)
-      }
-      // 写入当天缓存，刷新页面时直接复用，避免重复拉取
-      saveMarketCache({
-        date: todayText(),
-        fetchedAt: new Date().toISOString(),
-        stocks: enriched,
-        meta: { ...meta, klineCount: count },
-        market: derivedMarket,
-      })
-    } catch (error) {
-      setWarning(
-        `拉取失败：${error instanceof Error ? error.message : String(error)}。` +
-          ' 若在 vite preview 下运行，请改用 npm run dev（K 线接口需要本地服务）。',
-      )
-    } finally {
-      setLoading(false)
-      setProgress('')
-    }
-  }
-
-  // 挂载时：若当天缓存可用则直接加载，否则自动拉取一次
-  fetchAllRef.current = handleFetchAll
+  // 行情由单个服务端任务统一拉取，所有访客只读取共享快照。
   useEffect(() => {
-    const cached = loadMarketCache()
-    const dailyKlineCache = loadDailyKlineCache(defaultConfig.klineDays)
-    setFullKlineCompleted(dailyKlineCache?.completed ?? false)
-    if (cached) {
-      const cachedStocks = dailyKlineCache
-        ? applyKline(cached.stocks, dailyKlineCache.entries)
-        : cached.stocks
-      setStocks(cachedStocks)
-      setMarket(deriveMarketSnapshot(cachedStocks))
-      setDataMeta({
-        ...cached.meta,
-        klineCount: Math.max(
-          cached.meta.klineCount,
-          Object.keys(dailyKlineCache?.entries ?? {}).length,
-        ),
-      })
-      const time = new Date(cached.fetchedAt).toLocaleTimeString('zh-CN', {
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-      setMessage(
-        `已加载本地缓存：${cached.meta.total} 只 A 股（交易日 ${cached.meta.tradeDate}，${time} 拉取）。` +
-          ' 如需更新请点击「拉取最新数据」。',
-      )
-      return
+    let cancelled = false
+    let requestInFlight = false
+    let loadedRunDate: string | null = null
+    let loadedFinalVersion: string | null = null
+    let lastNoticeKey: string | null = null
+
+    const refreshServerMarket = async () => {
+      if (requestInFlight) return
+      requestInFlight = true
+      try {
+        const response = await fetch('/api/market-data?status=1')
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const payload = (await response.json()) as DailyMarketPayload
+        if (cancelled) return
+
+        setMarketJob(payload)
+        const isFinal = [
+          'complete',
+          'complete_with_errors',
+          'no_new_trading_day',
+        ].includes(payload.status)
+        const finalVersion = `${payload.runDate}:${payload.status}:${payload.updatedAt}`
+        const shouldLoadSnapshot =
+          Boolean(payload.meta && payload.runDate) &&
+          (loadedRunDate !== payload.runDate ||
+            (isFinal && loadedFinalVersion !== finalVersion))
+
+        if (shouldLoadSnapshot) {
+          const snapshotResponse = await fetch('/api/market-data')
+          if (!snapshotResponse.ok) {
+            throw new Error(`行情快照接口返回 HTTP ${snapshotResponse.status}`)
+          }
+          const snapshot = (await snapshotResponse.json()) as DailyMarketPayload
+          if (cancelled) return
+          if (snapshot.stocks.length > 0 && snapshot.meta) {
+            setStocks(snapshot.stocks)
+            setMarket(deriveMarketSnapshot(snapshot.stocks))
+            setDataMeta(snapshot.meta)
+            loadedRunDate = snapshot.runDate
+            setMessage(
+              `服务端共享行情：${snapshot.meta.total} 只 A 股，交易日 ${snapshot.meta.tradeDate}；` +
+                `已补齐 ${snapshot.meta.klineCount} 只 K 线。`,
+            )
+          }
+        }
+        if (isFinal) {
+          loadedFinalVersion = finalVersion
+        }
+
+        const noticeKey = `${payload.runDate}:${payload.status}:${payload.phase}`
+        if (!payload.meta && noticeKey !== lastNoticeKey) {
+          lastNoticeKey = noticeKey
+          setMessage(
+            payload.status === 'fetching_market'
+              ? '服务端正在拉取全市场数据，完成后此处会自动更新。'
+              : '服务端行情任务将在每个交易日 15:00（北京时间）自动运行。',
+          )
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setWarning(
+            `读取服务端共享行情失败：${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+      } finally {
+        requestInFlight = false
+      }
     }
-    void fetchAllRef.current()
+
+    void refreshServerMarket()
+    const timer = window.setInterval(refreshServerMarket, 60_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [])
 
   // 挂载时先显示当天缓存，再每分钟自动更新；标签页隐藏时暂停请求。
@@ -1694,109 +1580,6 @@ function App() {
       document.removeEventListener('visibilitychange', refreshWhenVisible)
     }
   }, [])
-
-  const handleFillKline = async () => {
-    const dailyCache =
-      loadDailyKlineCache(config.klineDays) ??
-      createDailyKlineCache(config.klineDays)
-    const allCodes = [...new Set(stocks.map((stock) => stock.code))]
-    const alreadyCovered = allCodes.every((code) => {
-      const symbol = toSymbol(code)
-      return symbol !== null && Boolean(dailyCache.entries[symbol])
-    })
-    if (dailyCache.completed && alreadyCovered) {
-      setFullKlineCompleted(true)
-      setMessage('今日全量 K 线请求已完成，直接复用缓存，不会重复请求。')
-      return
-    }
-    dailyCache.completed = false
-
-    setLoading(true)
-    setWarning('')
-    setProgress('准备全市场 K 线…')
-    try {
-      const pendingCodes = allCodes.filter((code) => {
-        const symbol = toSymbol(code)
-        return symbol !== null && !dailyCache.entries[symbol]
-      })
-      const failed = new Set<string>(
-        allCodes.filter((code) => toSymbol(code) === null),
-      )
-      let processed = 0
-      let currentStocks = applyKline(stocks, dailyCache.entries)
-
-      for (let index = 0; index < pendingCodes.length; index += 120) {
-        const batch = pendingCodes.slice(index, index + 120)
-        try {
-          const result = await fetchKlines(
-            batch,
-            config.klineDays,
-            (done) =>
-              setProgress(
-                `全市场补齐 K 线：${processed + done}/${pendingCodes.length}`,
-              ),
-          )
-          Object.assign(dailyCache.entries, result.data)
-          result.failed.forEach((symbol) => failed.add(symbol))
-          currentStocks = applyKline(currentStocks, result.data)
-          setStocks(currentStocks)
-          setMarket(deriveMarketSnapshot(currentStocks))
-          setDataMeta((current) =>
-            current
-              ? {
-                  ...current,
-                  klineCount: allCodes.filter((code) => {
-                    const symbol = toSymbol(code)
-                    return symbol !== null && dailyCache.entries[symbol]
-                  }).length,
-                }
-              : current,
-          )
-          saveDailyKlineCache(dailyCache)
-        } catch {
-          batch.forEach((code) => failed.add(code))
-        }
-        processed += batch.length
-        setProgress(
-          `全市场补齐 K 线：${processed}/${pendingCodes.length}，` +
-            `本次失败 ${failed.size} 只`,
-        )
-      }
-
-      setStocks(currentStocks)
-      setMarket(deriveMarketSnapshot(currentStocks))
-      const missingCodes = allCodes.filter((code) => {
-        const symbol = toSymbol(code)
-        return symbol === null || !dailyCache.entries[symbol]
-      })
-      dailyCache.completed = missingCodes.length === 0
-      const persisted = saveDailyKlineCache(dailyCache)
-      setFullKlineCompleted(dailyCache.completed && persisted)
-
-      if (missingCodes.length > 0) {
-        setMessage(
-          `已取得 ${allCodes.length - missingCodes.length}/${allCodes.length} 只标的的 K 线响应；` +
-            `剩余 ${missingCodes.length} 只会在重试时单独补拉。`,
-        )
-        setWarning('部分标的未能取得 K 线，请稍后重试；已成功数据不会重复请求。')
-      } else if (!persisted) {
-        setMessage(`已完成 ${allCodes.length} 只标的的全量 K 线请求。`)
-        setWarning('浏览器无法保存当日 K 线缓存，刷新页面后可能需要重新补齐。')
-      } else {
-        setMessage(
-          `今日已完成全部 ${allCodes.length} 只标的的 K 线请求；当天再次操作会直接复用缓存。`,
-        )
-      }
-    } catch (error) {
-      setWarning(
-        `全量补齐失败：${error instanceof Error ? error.message : String(error)}。` +
-          ' 请确认通过 npm run dev 或 npm start 启动（K 线需要本地服务）。',
-      )
-    } finally {
-      setLoading(false)
-      setProgress('')
-    }
-  }
 
   const handleQueryYearHigh = useCallback(async (stock: ScoredStock) => {
     const symbol = toSymbol(stock.code)
@@ -1825,11 +1608,6 @@ function App() {
         )
       const updatedStocks = updateHighPrice(stocks)
       setStocks(updatedStocks)
-
-      const cached = loadMarketCache()
-      if (cached) {
-        saveMarketCache({ ...cached, stocks: updateHighPrice(cached.stocks) })
-      }
       setMessage(
         `已查询 ${stock.name}（${stock.code}）近一年最高价：${highPrice1y.toFixed(2)}。`,
       )
@@ -2510,26 +2288,12 @@ function App() {
         <div className="section-title">
           <h2>数据与导出</h2>
           <p>
-            财务与估值主表来自东方财富公开接口（浏览器直连）；现价、一年低点与三年低点由本地
-            <code> /api/kline </code> 代理补齐，其中现价优先使用腾讯最新快照，用于计算涨1、涨3与涨幅得分。
+            全站行情由服务端在每个交易日 15:00（北京时间）统一拉取东方财富财务估值数据，
+            并通过腾讯行情补齐一年/三年高低价；结果保存在服务端，所有用户共享。
           </p>
         </div>
 
         <div className="action-row">
-          <button type="button" onClick={handleFetchAll} disabled={loading}>
-            {loading ? '处理中…' : '拉取最新数据并评分'}
-          </button>
-          <button
-            type="button"
-            onClick={handleFillKline}
-            disabled={loading || fullKlineDoneForCurrentStocks}
-          >
-            {loading
-              ? '处理中…'
-              : fullKlineDoneForCurrentStocks
-                ? '今日全量 K 线请求已完成'
-                : '全量补齐 K 线'}
-          </button>
           <button type="button" onClick={exportScoreTable}>
             导出评分表 CSV
           </button>
@@ -2556,6 +2320,22 @@ function App() {
         </div>
 
         {progress && <p className="helper-text">{progress}</p>}
+        {marketJob && (
+          <p className="helper-text">
+            服务端任务：
+            {marketJob.status === 'retry_wait' && marketJob.phase === 'market'
+              ? '市场快照失败，5 分钟后重试'
+              : marketJob.status === 'complete_with_errors' &&
+                  marketJob.phase === 'market'
+                ? '市场快照多次拉取失败'
+                : DAILY_MARKET_STATUS_LABELS[marketJob.status] ??
+                  marketJob.status}
+            {marketJob.meta
+              ? `（K 线 ${marketJob.meta.klineCount}/${marketJob.meta.total}，失败 ${marketJob.failedCount}）`
+              : ''}
+            {marketJob.lastError ? `；${marketJob.lastError}` : ''}
+          </p>
+        )}
         <p className="helper-text">{message}</p>
         {warning && <p className="helper-text error">{warning}</p>}
 
@@ -2589,9 +2369,8 @@ function App() {
         )}
 
         <p className="helper-text">
-          说明：财务与估值字段采用最近公开快照；现价优先使用腾讯最新快照。首次拉取仍优先补可能达到门槛的候选以尽快完成评分；
-          点击「全量补齐 K 线」可处理当前全部标的。结果按批次缓存，当天重复操作只会重试未成功的标的；
-          全部标的均返回后当天不再请求。当前仍有 {pendingKline} 只缺少一年或三年低点数据，可能是上游无可用历史记录。
+          失败项目会由服务端每隔 5 分钟单独补拉，最多重试 3 次；成功数据不会重复请求。当前仍有 {pendingKline}
+          只缺少一年或三年低点数据，部分新股或停牌股票可能没有足够历史记录。
         </p>
         <p className="helper-text">
           当前已接入<strong>股息率</strong>、<strong>商誉占净资产</strong>、

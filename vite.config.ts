@@ -13,6 +13,7 @@ import { queryIndexHistory } from './server/index-history.mjs'
 const klineApiPlugin = (): Plugin => ({
   name: 'dashu-kline-api',
   configureServer(server) {
+    let stopDailyMarketScheduler: (() => void) | undefined
     server.middlewares.use((req, res, next) => {
       if (!req.url) {
         next()
@@ -26,6 +27,19 @@ const klineApiPlugin = (): Plugin => ({
       }
 
       const url = new URL(req.url, 'http://localhost')
+
+      if (url.pathname === '/api/market-data') {
+        import(/* @vite-ignore */ dailyMarketUrl())
+          .then(({ handleDailyMarketRoute }) =>
+            handleDailyMarketRoute(req as never, res as never, url),
+          )
+          .catch((error: unknown) => {
+            sendJson(500, {
+              error: error instanceof Error ? error.message : String(error),
+            })
+          })
+        return
+      }
 
       // 账号与数据接口（/api/auth/* /api/admin/* /api/user-data/* /api/market-temperature）：
       // 与生产共用 server/api.mjs
@@ -113,6 +127,23 @@ const klineApiPlugin = (): Plugin => ({
           }),
         )
     })
+
+    if (process.env.DAILY_MARKET_SCHEDULER_ENABLED === '1') {
+      void (async () => {
+        const [{ fetchRealMarketData }, { startDailyMarketScheduler }] =
+          await Promise.all([
+            server.ssrLoadModule('/src/lib/eastmoney.ts'),
+            import(/* @vite-ignore */ dailyMarketUrl()),
+          ])
+        stopDailyMarketScheduler = startDailyMarketScheduler({
+          fetchMarketData: fetchRealMarketData,
+        })
+      })().catch((error: unknown) => {
+        console.error('[daily-market] 开发环境调度器启动失败', error)
+      })
+    }
+
+    server.httpServer?.once('close', () => stopDailyMarketScheduler?.())
   },
 })
 
@@ -121,6 +152,7 @@ const entry = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.u
 // 通过运行时变量解析路径，避免 esbuild 在打包配置时静态跟随该动态 import
 // （其模块链依赖 node:sqlite，构建期不应加载）。
 const serverApiUrl = () => new URL('./server/api.mjs', import.meta.url).href
+const dailyMarketUrl = () => new URL('./server/daily-market.mjs', import.meta.url).href
 
 // https://vitejs.dev/config/
 export default defineConfig({

@@ -85,6 +85,29 @@ db.exec(`
     updated_at        INTEGER NOT NULL
   );
 
+  -- 服务端共享的每日市场快照与定时任务状态
+  CREATE TABLE IF NOT EXISTS daily_market_state (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    run_date      TEXT    NOT NULL,
+    status        TEXT    NOT NULL,
+    phase         TEXT    NOT NULL,
+    stocks_json   TEXT,
+    meta_json     TEXT,
+    failed_codes  TEXT    NOT NULL DEFAULT '[]',
+    retry_count   INTEGER NOT NULL DEFAULT 0,
+    retry_at      INTEGER,
+    last_error    TEXT,
+    updated_at    INTEGER NOT NULL
+  );
+
+  -- 按代码增量持久化全量 K 线，服务重启后可续跑失败项
+  CREATE TABLE IF NOT EXISTS daily_market_klines (
+    run_date  TEXT NOT NULL,
+    symbol    TEXT NOT NULL,
+    payload   TEXT NOT NULL,
+    PRIMARY KEY (run_date, symbol)
+  );
+
   -- 限流
   CREATE TABLE IF NOT EXISTS rate_limits (
     key          TEXT    NOT NULL,

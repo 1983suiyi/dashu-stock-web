@@ -6,15 +6,10 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { apiGet, apiSend } from '../auth/api'
-import { fetchRealMarketData } from '../lib/eastmoney'
-import { applyKline, fetchIndexSnapshot, fetchKlines } from '../lib/kline'
-import {
-  computeMarketTemperature,
-  pickKlineCandidates,
-  scoreStocks,
-} from '../lib/strategy'
+import { fetchIndexSnapshot } from '../lib/kline'
+import { computeMarketTemperature } from '../lib/strategy'
 import { defaultConfig } from '../data/stocks'
-import type { MarketTemperatureRecord } from '../types'
+import type { DataSourceMeta, MarketTemperatureRecord, StockRecord } from '../types'
 
 const todayStr = () => {
   const d = new Date()
@@ -78,35 +73,32 @@ export function MarketTemperaturePanel() {
   }
 
   /**
-   * 从东方财富公开接口拉取当日全市场真实数据 + 上证点位，
-   * 复用 computeMarketTemperature 计算温度并自动填充弹窗字段。
-   * 为得到准确的「三低命中数」，会补齐候选股票的一年/三年低价。
+   * 复用服务端定时任务生成的全站快照，避免管理员手动触发第二轮全市场拉取。
    */
   const fetchAndFill = async () => {
     setFetching(true)
     setError(null)
-    setFetchProgress('正在连接数据源…')
+    setFetchProgress('正在读取服务端共享行情…')
     try {
-      const { stocks } = await fetchRealMarketData((msg) => setFetchProgress(msg))
-
-      // 补齐候选 K 线：三低命中依赖一年内最低价，需回填后才能判定 eligible
-      setFetchProgress('正在筛选需补 K 线的候选…')
-      const firstPass = scoreStocks(stocks, defaultConfig)
-      const candidates = pickKlineCandidates(firstPass, defaultConfig)
-      let enriched = stocks
-      if (candidates.length > 0) {
-        setFetchProgress(`正在补齐 ${candidates.length} 只候选的 K 线…`)
-        const kline = await fetchKlines(candidates, defaultConfig.klineDays, (done, total) =>
-          setFetchProgress(`正在补齐候选 K 线：${done}/${total}`),
-        )
-        enriched = applyKline(stocks, kline.data)
+      const response = await fetch('/api/market-data')
+      if (!response.ok) throw new Error(`共享行情接口返回 HTTP ${response.status}`)
+      const payload = (await response.json()) as {
+        stocks: StockRecord[]
+        meta: DataSourceMeta | null
+      }
+      if (!payload.stocks.length || !payload.meta) {
+        throw new Error('服务端尚无全市场快照，请等待每日 15:00 定时拉取完成')
       }
 
       setFetchProgress('正在获取上证指数点位…')
       const indexEntry = await fetchIndexSnapshot()
       const indexLevel = indexEntry?.lastClose ?? null
 
-      const temperature = computeMarketTemperature(enriched, indexLevel, defaultConfig)
+      const temperature = computeMarketTemperature(
+        payload.stocks,
+        indexLevel,
+        defaultConfig,
+      )
       // 保留管理员已选择的日期，只覆盖指标字段
       setEditRecord((prev) =>
         prev
@@ -114,7 +106,9 @@ export function MarketTemperaturePanel() {
           : temperature,
       )
       setFetchProgress(null)
-      setNotice(`已拉取并填充 ${stocks.length} 只股票的市场温度`)
+      setNotice(
+        `已根据服务端 ${payload.meta.tradeDate} 行情填充 ${payload.stocks.length} 只股票的市场温度`,
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : '拉取市场数据失败')
     } finally {

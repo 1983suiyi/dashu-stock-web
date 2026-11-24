@@ -298,7 +298,9 @@ export const queryKline = async (codesParam, daysParam) => {
       }
       Object.assign(data, entries)
       for (const symbol of batch) {
-        if (!entries[symbol]) failed.push(symbol)
+        // Quote and history are separate parts: retain a valid quote while
+        // scheduling another attempt for symbols whose 3-year history failed.
+        if (!entries[symbol] || !history[symbol]) failed.push(symbol)
       }
     } catch {
       failed.push(...batch)

@@ -12,6 +12,10 @@ import { getIndustryCycle } from './industry-cycle.mjs'
 import { getStockValuation } from './stock-valuation.mjs'
 import { queryIndexHistory } from './index-history.mjs'
 import { handleAccountApi } from './api.mjs'
+import {
+  handleDailyMarketRoute,
+  startDailyMarketScheduler,
+} from './daily-market.mjs'
 
 const PORT = Number(process.env.PORT || 8787)
 const HOST = process.env.HOST || '0.0.0.0'
@@ -90,6 +94,8 @@ const server = createServer(async (req, res) => {
 
   // 账号相关接口（/api/auth/* 与 /api/admin/*）
   if (await handleAccountApi(req, res, url)) return
+
+  if (await handleDailyMarketRoute(req, res, url)) return
 
   if (url.pathname === '/api/kline') {
     try {
@@ -178,6 +184,8 @@ const server = createServer(async (req, res) => {
 
   await serveStatic(res, url.pathname)
 })
+
+startDailyMarketScheduler()
 
 server.listen(PORT, HOST, () => {
   console.log(`大数选股服务已启动: http://${HOST}:${PORT}`)
