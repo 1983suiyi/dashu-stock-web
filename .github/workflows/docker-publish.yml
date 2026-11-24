@@ -1,7 +1,5 @@
 name: Build and push image
 
-# main 分支更新后自动构建镜像并推送到 GitHub 容器仓库（ghcr.io），
-# ClawCloud Run 部署 ghcr.io/<owner>/<repo>:latest 即可。
 on:
   push:
     branches: [main]
