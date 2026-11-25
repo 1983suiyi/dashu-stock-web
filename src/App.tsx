@@ -3591,7 +3591,7 @@ function App() {
       <aside className={sidebarVisible ? 'sidebar' : 'sidebar hidden'}>
         <div className="sidebar-header">
           <strong>大数工作台</strong>
-          <p>suiyi / 研究模式</p>
+          <p>研究模式</p>
         </div>
         <nav className="nav-list">
           {navItems.map((item) => (
