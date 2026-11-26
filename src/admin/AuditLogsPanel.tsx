@@ -32,8 +32,18 @@ const ACTION_LABELS: Record<string, string> = {
 const formatTime = (value: number) =>
   new Date(value).toLocaleString('zh-CN', { hour12: false })
 
+const LOGIN_REASON_LABELS: Record<string, string> = {
+  user_not_found: '邮箱未注册',
+  wrong_password: '密码错误',
+  rate_limited: '登录过于频繁，被限流',
+}
+
 const formatDetail = (detail: unknown) => {
   if (detail == null) return ''
+  if (typeof detail === 'object' && detail !== null && 'reason' in detail) {
+    const reason = String((detail as { reason: unknown }).reason)
+    return LOGIN_REASON_LABELS[reason] ?? reason
+  }
   try {
     return JSON.stringify(detail)
   } catch {

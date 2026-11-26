@@ -318,17 +318,18 @@ const registerUser = async (
 const loginUser = ({ email, password }, ip, userAgent) => {
   const mail = normalizeEmail(email)
   if (!bumpRateLimit(`login:ip:${ip ?? 'unknown'}`, 15 * 60 * 1000, 20)) {
+    recordAudit({ action: 'login_failed', target: mail, detail: { reason: 'rate_limited' }, ip })
     return { ok: false, code: 'RATE_LIMITED' }
   }
 
   const row = db.prepare('SELECT * FROM users WHERE email = ?').get(mail)
   const badCredentials = { ok: false, code: 'BAD_CREDENTIALS' }
   if (!row) {
-    recordAudit({ action: 'login_failed', target: mail, ip })
+    recordAudit({ action: 'login_failed', target: mail, detail: { reason: 'user_not_found' }, ip })
     return badCredentials
   }
   if (!verifyPassword(String(password ?? ''), row.password_hash, row.password_salt)) {
-    recordAudit({ actorUserId: Number(row.id), action: 'login_failed', target: mail, ip })
+    recordAudit({ actorUserId: Number(row.id), action: 'login_failed', target: mail, detail: { reason: 'wrong_password' }, ip })
     return badCredentials
   }
   if (row.status !== 'active') {
