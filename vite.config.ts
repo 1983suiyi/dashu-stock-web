@@ -5,6 +5,7 @@ import { queryIndexSnapshot, queryKline } from './server/kline.mjs'
 import { getIndustryCycle } from './server/industry-cycle.mjs'
 import { getStockValuation } from './server/stock-valuation.mjs'
 import { queryIndexHistory } from './server/index-history.mjs'
+import { queryCapitalFlow } from './server/capital-flow.mjs'
 
 /**
  * 开发环境复用生产环境的接口逻辑，避免维护两份实现。
@@ -109,6 +110,17 @@ const klineApiPlugin = (): Plugin => ({
           .catch((error: unknown) =>
             sendJson(500, {
               error: `指数快照异常：${error instanceof Error ? error.message : String(error)}`,
+            }),
+          )
+        return
+      }
+
+      if (url.pathname.startsWith('/api/capital-flow')) {
+        queryCapitalFlow()
+          .then((payload) => sendJson(200, payload))
+          .catch((error: unknown) =>
+            sendJson(500, {
+              error: `资金流向异常：${error instanceof Error ? error.message : String(error)}`,
             }),
           )
         return

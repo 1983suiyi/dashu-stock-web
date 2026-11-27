@@ -651,6 +651,27 @@ const DAILY_MARKET_STATUS_LABELS: Record<string, string> = {
 
 /** 上证指数快照缓存结构 */
 const INDEX_REFRESH_INTERVAL_MS = 60_000
+/** 资金流向刷新间隔（秒） */
+const CAPITAL_FLOW_REFRESH_MS = 30_000
+
+type CapitalFlowItem = {
+  mainNet: number
+  superLargeNet: number
+  smallNet: number
+}
+
+type CapitalFlowIndex = {
+  code: string
+  name: string
+  today: CapitalFlowItem | null
+  yesterday: (CapitalFlowItem & { date: string }) | null
+}
+
+type CapitalFlowPayload = {
+  isTradingDay: boolean
+  date: string
+  indices: CapitalFlowIndex[]
+}
 
 type IndexCache = {
   date: string
@@ -760,6 +781,8 @@ function App() {
   }, [])
   const [indexLoading, setIndexLoading] = useState(false)
   const indexRefreshInFlightRef = useRef(false)
+  const [capitalFlow, setCapitalFlow] = useState<CapitalFlowPayload | null>(null)
+  const [capitalFlowUpdatedAt, setCapitalFlowUpdatedAt] = useState<Date | null>(null)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
   const [scoreScope, setScoreScope] = useState<ScoreScope>('all')
@@ -1581,6 +1604,29 @@ function App() {
     }
   }, [])
 
+  // 资金流向：每 30 秒刷新一次，标签页隐藏时暂停。
+  useEffect(() => {
+    let inFlight = false
+    const refresh = async () => {
+      if (document.visibilityState !== 'visible' || inFlight) return
+      inFlight = true
+      try {
+        const response = await fetch('/api/capital-flow')
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const payload = (await response.json()) as CapitalFlowPayload
+        setCapitalFlow(payload)
+        setCapitalFlowUpdatedAt(new Date())
+      } catch {
+        // 静默失败，不阻塞页面
+      } finally {
+        inFlight = false
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(refresh, CAPITAL_FLOW_REFRESH_MS)
+    return () => window.clearInterval(timer)
+  }, [])
+
   const handleQueryYearHigh = useCallback(async (stock: ScoredStock) => {
     const symbol = toSymbol(stock.code)
     if (!symbol) {
@@ -2235,6 +2281,102 @@ function App() {
             </table>
           </div>
         </div>
+      </section>
+
+      {/* 资金流向面板 */}
+      <section className="panel">
+        <div className="section-title">
+          <h2>资金流向</h2>
+          <p>
+            数据来源：东方财富，每 {CAPITAL_FLOW_REFRESH_MS / 1000} 秒刷新。展示今日主力、超大单（机构）、小单（散户）净流入，并与上一交易日对比。
+            {capitalFlowUpdatedAt
+              ? ` 最近更新 ${capitalFlowUpdatedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+              : ''}
+          </p>
+        </div>
+
+        {!capitalFlow ? (
+          <p className="muted">正在加载资金流向数据…</p>
+        ) : !capitalFlow.isTradingDay ? (
+          <p className="muted">今日休市，无实时资金流向数据。</p>
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              gap: '12px',
+            }}
+          >
+            {capitalFlow.indices.map((idx) => {
+              const dims: { label: string; today: number | null; yest: number | null }[] = [
+                { label: '主力净流入', today: idx.today?.mainNet ?? null, yest: idx.yesterday?.mainNet ?? null },
+                { label: '超大单', today: idx.today?.superLargeNet ?? null, yest: idx.yesterday?.superLargeNet ?? null },
+                { label: '小单(散户)', today: idx.today?.smallNet ?? null, yest: idx.yesterday?.smallNet ?? null },
+              ]
+              return (
+                <div
+                  key={idx.code}
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: '8px', fontSize: '14px' }}>
+                    {idx.name}
+                  </div>
+                  {dims.map((d) => {
+                    const todayYi = d.today !== null ? d.today / 1e8 : null
+                    const yestYi = d.yest !== null ? d.yest / 1e8 : null
+                    const diff =
+                      todayYi !== null && yestYi !== null ? todayYi - yestYi : null
+                    const todayColor =
+                      todayYi !== null
+                        ? todayYi > 0
+                          ? '#ef4444'
+                          : todayYi < 0
+                            ? '#22c55e'
+                            : 'inherit'
+                        : 'inherit'
+                    const diffColor =
+                      diff !== null
+                        ? diff > 0
+                          ? '#ef4444'
+                          : diff < 0
+                            ? '#22c55e'
+                            : 'inherit'
+                        : 'inherit'
+                    return (
+                      <div
+                        key={d.label}
+                        style={{
+                          marginBottom: '6px',
+                          fontSize: '12px',
+                          lineHeight: '1.5',
+                        }}
+                      >
+                        <div style={{ opacity: 0.7 }}>{d.label}</div>
+                        <div style={{ color: todayColor, fontWeight: 500 }}>
+                          {todayYi !== null
+                            ? `${todayYi > 0 ? '+' : ''}${todayYi.toFixed(2)}亿`
+                            : '—'}
+                        </div>
+                        {diff !== null && (
+                          <div style={{ color: diffColor, fontSize: '11px' }}>
+                            {diff > 0 ? '↑' : diff < 0 ? '↓' : '→'}{' '}
+                            {Math.abs(diff).toFixed(2)}亿
+                            {idx.yesterday ? `（昨${idx.yesterday.date.slice(5)}）` : ''}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </section>
 
       <section className="panel">
