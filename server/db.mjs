@@ -32,10 +32,11 @@ db.exec(`
     phone         TEXT    UNIQUE,
     password_hash TEXT    NOT NULL,
     password_salt TEXT    NOT NULL,
-    status        TEXT    NOT NULL DEFAULT 'active',
-    role          TEXT    NOT NULL DEFAULT 'user',
-    created_at    INTEGER NOT NULL,
-    last_login_at INTEGER
+    status           TEXT    NOT NULL DEFAULT 'active',
+    role             TEXT    NOT NULL DEFAULT 'user',
+    realtime_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at       INTEGER NOT NULL,
+    last_login_at    INTEGER
   );
 
   -- 验证码（邮箱/短信统一）
@@ -139,6 +140,13 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);
 `)
+
+// 迁移：为旧库补充 users.realtime_enabled（实时行情页面开通标记，默认关闭）
+try {
+  db.exec('ALTER TABLE users ADD COLUMN realtime_enabled INTEGER NOT NULL DEFAULT 0')
+} catch {
+  // 列已存在，忽略
+}
 
 export const now = () => Date.now()
 

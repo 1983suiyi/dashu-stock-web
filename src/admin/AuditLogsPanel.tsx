@@ -23,7 +23,7 @@ const ACTION_LABELS: Record<string, string> = {
   account_delete: '注销账号',
   invite_create: '生成邀请码',
   invite_update: '修改邀请码',
-  user_status_update: '修改用户状态',
+  user_update: '修改用户',
   user_delete: '删除用户',
   user_reset_password: '管理员重置密码',
   market_temperature_correct: '校正市场温度',

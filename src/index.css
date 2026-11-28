@@ -1150,6 +1150,89 @@ button:disabled {
   min-width: 260px;
 }
 
+.stock-flow-controls {
+  display: grid;
+  grid-template-columns: minmax(260px, 460px) max-content max-content;
+  align-items: end;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.stock-flow-search-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: #dce6f6;
+}
+
+.stock-flow-search-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.watch-group-edit-controls {
+  display: grid;
+  grid-template-columns: minmax(240px, 400px) max-content max-content;
+  align-items: end;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.watch-group-edit-controls .inline-search {
+  min-width: 0;
+}
+
+.watch-group-edit-controls .inline-search input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.watch-group-delete-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(3, 10, 20, 0.72);
+}
+
+.watch-group-delete-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(560px, 100%);
+  padding: 16px;
+  border: 1px solid rgba(143, 170, 220, 0.24);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.45);
+}
+
+.watch-group-delete-dialog p {
+  margin: 6px 0 0;
+  color: #aac0df;
+}
+
+.stock-move-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 320px;
+}
+
+.stock-move-controls select {
+  width: 140px;
+  min-width: 0;
+  padding: 0.55rem 0.6rem;
+}
+
+.stock-move-controls button {
+  padding: 0.5rem 0.65rem;
+  white-space: nowrap;
+}
+
 .archive-list,
 .ai-grid {
   display: grid;
@@ -1158,6 +1241,55 @@ button:disabled {
 
 .button-secondary {
   background: rgba(255, 255, 255, 0.06);
+}
+
+@media (max-width: 860px) {
+  .stock-flow-controls {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+
+  .stock-flow-controls .button-secondary {
+    grid-column: 2;
+  }
+
+  .watch-group-edit-controls {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+
+  .watch-group-edit-controls .button-secondary {
+    grid-column: 2;
+  }
+
+  .stock-move-controls {
+    flex-wrap: wrap;
+    min-width: 220px;
+  }
+}
+
+@media (max-width: 520px) {
+  .stock-flow-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stock-flow-controls button {
+    justify-self: start;
+  }
+
+  .stock-flow-controls .button-secondary {
+    grid-column: 1;
+  }
+
+  .watch-group-edit-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .watch-group-edit-controls button {
+    justify-self: start;
+  }
+
+  .watch-group-edit-controls .button-secondary {
+    grid-column: 1;
+  }
 }
 
 /* ---------- 周期行业页面 ---------- */

@@ -141,7 +141,7 @@ export const handleAdminRoute = async (req, res, url, session) => {
       const offset = (page - 1) * pageSize
       const rows = db
         .prepare(
-          `SELECT id, email, status, role, created_at, last_login_at
+          `SELECT id, email, status, role, realtime_enabled, created_at, last_login_at
            FROM users ${whereSql}
            ORDER BY created_at DESC
            LIMIT ? OFFSET ?`,
@@ -154,6 +154,7 @@ export const handleAdminRoute = async (req, res, url, session) => {
           email: row.email,
           status: row.status,
           role: row.role,
+          realtimeEnabled: Number(row.realtime_enabled ?? 0) === 1,
           createdAt: Number(row.created_at),
           lastLoginAt: row.last_login_at ? Number(row.last_login_at) : null,
         })),
@@ -174,25 +175,42 @@ export const handleAdminRoute = async (req, res, url, session) => {
         return true
       }
       const body = await readJsonBody(req)
-      const status = body.status === 'disabled' ? 'disabled' : body.status === 'active' ? 'active' : null
-      if (!status) {
-        fail(res, 400, 'INVALID_INPUT', 'status 需为 active 或 disabled')
+      const nextStatus =
+        body.status === 'disabled' ? 'disabled' : body.status === 'active' ? 'active' : null
+      const hasRealtime = typeof body.realtimeEnabled === 'boolean'
+      if (!nextStatus && !hasRealtime) {
+        fail(res, 400, 'INVALID_INPUT', 'status 或 realtimeEnabled 至少提供一项')
         return true
       }
-      if (userId === session.user.id) {
-        fail(res, 400, 'INVALID_INPUT', '不能操作自己')
+      if (nextStatus && userId === session.user.id) {
+        fail(res, 400, 'INVALID_INPUT', '不能修改自己的账号状态')
         return true
       }
-      const info = db.prepare('UPDATE users SET status = ? WHERE id = ?').run(status, userId)
+      const sets = []
+      const values = []
+      if (nextStatus) {
+        sets.push('status = ?')
+        values.push(nextStatus)
+      }
+      if (hasRealtime) {
+        sets.push('realtime_enabled = ?')
+        values.push(body.realtimeEnabled ? 1 : 0)
+      }
+      const info = db
+        .prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`)
+        .run(...values, userId)
       if (Number(info.changes) === 0) {
         fail(res, 404, 'INVALID_INPUT', '用户不存在')
         return true
       }
       recordAudit({
         actorUserId: session.user.id,
-        action: 'user_status_update',
+        action: 'user_update',
         target: String(userId),
-        detail: { status },
+        detail: {
+          ...(nextStatus ? { status: nextStatus } : {}),
+          ...(hasRealtime ? { realtimeEnabled: body.realtimeEnabled } : {}),
+        },
         ip,
       })
       ok(res, { updated: true })

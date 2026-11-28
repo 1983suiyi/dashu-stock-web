@@ -20,6 +20,7 @@ import { IndustryCycleChart } from './components/IndustryCycleChart'
 import { StockValuationChart } from './components/StockValuationChart'
 import { BullBearSection } from './components/BullBearSection'
 import { UserMenu } from './auth/UserMenu'
+import { useSession } from './auth/session'
 import { syncSave } from './auth/sync'
 import { apiGet, apiSend } from './auth/api'
 import {
@@ -115,6 +116,7 @@ const csvHeaders = [
 
 type WorkspaceView =
   | 'overview'
+  | 'realtime'
   | 'scores'
   | 'diagnosis'
   | 'portfolio'
@@ -218,6 +220,7 @@ const MARKET_TEMPERATURE_CACHE_KEY = 'dashu-market-temperature'
 
 const navItems: Array<{ key: WorkspaceView; label: string }> = [
   { key: 'overview', label: '市场概况' },
+  { key: 'realtime', label: '实时行情' },
   { key: 'scores', label: '大数评分' },
   { key: 'diagnosis', label: '个股诊断' },
   { key: 'portfolio', label: '持仓' },
@@ -658,6 +661,8 @@ type CapitalFlowItem = {
   mainNet: number
   superLargeNet: number
   smallNet: number
+  combined: number
+  amount: number
 }
 
 type CapitalFlowIndex = {
@@ -667,11 +672,145 @@ type CapitalFlowIndex = {
   yesterday: (CapitalFlowItem & { date: string }) | null
 }
 
+type CapitalFlowTotal = {
+  today: CapitalFlowItem | null
+  yesterday: (CapitalFlowItem & { date: string }) | null
+  dayBefore: (CapitalFlowItem & { date: string }) | null
+}
+
 type CapitalFlowPayload = {
   isTradingDay: boolean
   date: string
+  marketTotal: CapitalFlowTotal
   indices: CapitalFlowIndex[]
 }
+
+/** 个股资金流刷新间隔（与大盘资金流一致） */
+const STOCK_FLOW_REFRESH_MS = 30_000
+/** 「实时行情」页自选分组的本地存储键 */
+const WATCH_GROUPS_KEY = 'dashu-realtime-watchgroups'
+/** 旧版扁平自选列表的存储键（仅用于迁移） */
+const REALTIME_WATCHLIST_KEY = 'dashu-realtime-watchlist'
+/** 系统分组：收纳尚未分配到命名标签的标的 */
+const UNASSIGNED_GROUP_ID = '__unassigned__'
+/** 每个分组最多容纳的股票数 */
+const MAX_GROUP_STOCKS = 15
+
+type StockCapitalFlowItem = {
+  code: string
+  name: string | null
+  price: number | null
+  changePct: number | null
+  mainNet: number | null
+  mainPct: number | null
+  superLargeNet: number | null
+  largeNet: number | null
+  mediumNet: number | null
+  smallNet: number | null
+}
+
+type StockCapitalFlowPayload = {
+  stocks: StockCapitalFlowItem[]
+}
+
+type StockSearchCandidate = {
+  code: string
+  name: string
+  category: string
+}
+
+type WatchGroup = {
+  id: string
+  name: string
+  codes: string[]
+}
+
+const createWatchGroup = (index: number, name = `分组 ${index}`): WatchGroup => ({
+  id: `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+  name,
+  codes: [],
+})
+
+const withUnassignedGroup = (groups: WatchGroup[]): WatchGroup[] => {
+  const unassigned = groups.find((group) => group.id === UNASSIGNED_GROUP_ID)
+  const legacyDefault =
+    groups.find((group) => group.id === 'default') ??
+    (groups[0]?.id !== UNASSIGNED_GROUP_ID && groups[0]?.name.trim() === '分组 1'
+      ? groups[0]
+      : undefined)
+  const codes = [
+    ...new Set([...(unassigned?.codes ?? []), ...(legacyDefault?.codes ?? [])]),
+  ]
+  return [
+    { id: UNASSIGNED_GROUP_ID, name: '未分组', codes },
+    ...groups.filter(
+      (group) => group.id !== UNASSIGNED_GROUP_ID && group !== legacyDefault,
+    ),
+  ]
+}
+
+/** 读取旧版扁平自选列表（用于迁移到分组） */
+const loadLegacyWatchlist = (): string[] => {
+  try {
+    const raw = localStorage.getItem(REALTIME_WATCHLIST_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    return Array.isArray(parsed)
+      ? parsed.filter((c): c is string => typeof c === 'string')
+      : []
+  } catch {
+    return []
+  }
+}
+
+const loadWatchGroups = (): WatchGroup[] => {
+  try {
+    const raw = localStorage.getItem(WATCH_GROUPS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) {
+        const groups = parsed
+          .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object')
+          .map((g) => {
+            const id = String(g.id ?? '')
+            const codes = Array.isArray(g.codes)
+              ? g.codes.filter((c): c is string => typeof c === 'string')
+              : []
+            return {
+              id,
+              name: id === UNASSIGNED_GROUP_ID ? '未分组' : String(g.name ?? '分组'),
+              codes:
+                id === UNASSIGNED_GROUP_ID ? codes : codes.slice(0, MAX_GROUP_STOCKS),
+            }
+          })
+          .filter((g) => g.id !== '')
+        if (groups.length > 0) return withUnassignedGroup(groups)
+      }
+    }
+  } catch {
+    // 解析失败时回退到默认分组
+  }
+  // 无分组数据：用旧版自选列表初始化第一个分组
+  return withUnassignedGroup([
+    { id: 'default', name: '分组 1', codes: loadLegacyWatchlist() },
+  ])
+}
+
+const saveWatchGroups = (groups: WatchGroup[]) => {
+  try {
+    localStorage.setItem(WATCH_GROUPS_KEY, JSON.stringify(groups))
+  } catch {
+    // 写入失败不影响主流程
+  }
+}
+
+/** 净额（元）→ 亿元展示，缺失显示「—」 */
+const formatYi = (v: number | null) =>
+  v === null ? '—' : `${v > 0 ? '+' : ''}${(v / 1e8).toFixed(2)}亿`
+
+/** 资金流正负着色：流入红、流出绿 */
+const netColor = (v: number | null) =>
+  v === null ? 'inherit' : v > 0 ? '#ef4444' : v < 0 ? '#22c55e' : 'inherit'
 
 type IndexCache = {
   date: string
@@ -749,6 +888,7 @@ const weightedAverage = (
 }
 
 function App() {
+  const { user } = useSession()
   const [stocks, setStocks] = useState<StockRecord[]>(demoStocks)
   const [config, setConfig] = useState<StrategyConfig>(defaultConfig)
   const [market, setMarket] = useState(defaultMarketSnapshot)
@@ -783,6 +923,27 @@ function App() {
   const indexRefreshInFlightRef = useRef(false)
   const [capitalFlow, setCapitalFlow] = useState<CapitalFlowPayload | null>(null)
   const [capitalFlowUpdatedAt, setCapitalFlowUpdatedAt] = useState<Date | null>(null)
+  // 个股资金流：按分组管理自选股，仅当前分组中的股票会被查询
+  const [watchGroups, setWatchGroups] = useState<WatchGroup[]>(() => loadWatchGroups())
+  const [activeGroupId, setActiveGroupId] = useState('')
+  const [creatingGroup, setCreatingGroup] = useState(false)
+  const [newGroupName, setNewGroupName] = useState('')
+  const [renamingGroupId, setRenamingGroupId] = useState('')
+  const [renameGroupName, setRenameGroupName] = useState('')
+  const [pendingDeleteGroupId, setPendingDeleteGroupId] = useState('')
+  const [moveTargets, setMoveTargets] = useState<Record<string, string>>({})
+  const [watchlistInput, setWatchlistInput] = useState('')
+  const [stockSearchMatches, setStockSearchMatches] = useState<StockSearchCandidate[]>([])
+  const [stockSearchLoading, setStockSearchLoading] = useState(false)
+  const [stockFlow, setStockFlow] = useState<StockCapitalFlowPayload | null>(null)
+  const [stockFlowUpdatedAt, setStockFlowUpdatedAt] = useState<Date | null>(null)
+  const activeGroup = watchGroups.find((g) => g.id === activeGroupId) ?? watchGroups[0] ?? null
+  const namedGroupCount = watchGroups.filter((group) => group.id !== UNASSIGNED_GROUP_ID).length
+  const unassignedGroup = watchGroups.find((group) => group.id === UNASSIGNED_GROUP_ID) ?? null
+  const pendingDeleteGroup =
+    watchGroups.find((group) => group.id === pendingDeleteGroupId) ?? null
+  const activeGroupCodes = activeGroup?.codes ?? []
+  const activeCodesKey = activeGroupCodes.join(',')
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
   const [scoreScope, setScoreScope] = useState<ScoreScope>('all')
@@ -796,6 +957,18 @@ function App() {
   const [scoreSortDirection, setScoreSortDirection] = useState<SortDirection>('desc')
   const [activeView, setActiveView] = useState<WorkspaceView>('overview')
   const [sidebarVisible, setSidebarVisible] = useState(true)
+  // 「实时行情」页面按账户开通：未开通的账户不展示入口，也无法停留在该页面
+  const canViewRealtime = user?.realtimeEnabled === true
+  const visibleNavItems = navItems.filter(
+    (item) => item.key !== 'realtime' || canViewRealtime,
+  )
+
+  // 未开通实时行情的账户若停留在该页面，自动回到市场概况
+  useEffect(() => {
+    if (activeView === 'realtime' && !canViewRealtime) {
+      setActiveView('overview')
+    }
+  }, [activeView, canViewRealtime])
   const [stockQuery, setStockQuery] = useState('000589')
   const [industryQuery, setIndustryQuery] = useState('')
   const [snapshots, setSnapshots] = useState<ArchiveSnapshot[]>([])
@@ -1604,8 +1777,9 @@ function App() {
     }
   }, [])
 
-  // 资金流向：每 30 秒刷新一次，标签页隐藏时暂停。
+  // 资金流向：仅「实时行情」页面消费，进入该页面后每 30 秒刷新一次，标签页隐藏时暂停。
   useEffect(() => {
+    if (activeView !== 'realtime') return
     let inFlight = false
     const refresh = async () => {
       if (document.visibilityState !== 'visible' || inFlight) return
@@ -1625,7 +1799,212 @@ function App() {
     void refresh()
     const timer = window.setInterval(refresh, CAPITAL_FLOW_REFRESH_MS)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [activeView])
+
+  // 自选分组持久化到本地，刷新页面后仍保留
+  useEffect(() => {
+    saveWatchGroups(watchGroups)
+  }, [watchGroups])
+
+  // 保证当前分组始终有效（首次进入或删除分组后回退到第一个分组）
+  useEffect(() => {
+    if (!watchGroups.some((g) => g.id === activeGroupId)) {
+      setActiveGroupId(watchGroups[0]?.id ?? '')
+    }
+  }, [watchGroups, activeGroupId])
+
+  // 个股资金流：仅「实时行情」页且当前分组非空时查询，每 30 秒刷新一次，标签页隐藏时暂停。
+  useEffect(() => {
+    if (activeView !== 'realtime' || !activeCodesKey) return
+    let inFlight = false
+    const refresh = async () => {
+      if (document.visibilityState !== 'visible' || inFlight) return
+      inFlight = true
+      try {
+        const response = await fetch(`/api/stock-capital-flow?codes=${activeCodesKey}`)
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const payload = (await response.json()) as StockCapitalFlowPayload
+        setStockFlow(payload)
+        setStockFlowUpdatedAt(new Date())
+      } catch {
+        // 静默失败，不阻塞页面
+      } finally {
+        inFlight = false
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(refresh, STOCK_FLOW_REFRESH_MS)
+    return () => window.clearInterval(timer)
+  }, [activeView, activeCodesKey])
+
+  const addWatchStockCode = (code: string) => {
+    if (!activeGroup) return
+    if (activeGroup.codes.includes(code)) {
+      setWatchlistInput('')
+      setStockSearchMatches([])
+      return
+    }
+    if (
+      activeGroup.id !== UNASSIGNED_GROUP_ID &&
+      activeGroup.codes.length >= MAX_GROUP_STOCKS
+    ) {
+      setWarning(`每个普通标签最多 ${MAX_GROUP_STOCKS} 个标的，请新建标签或移除部分标的。`)
+      return
+    }
+    setWatchGroups((prev) =>
+      prev.map((g) => (g.id === activeGroup.id ? { ...g, codes: [...g.codes, code] } : g)),
+    )
+    setWatchlistInput('')
+    setStockSearchMatches([])
+  }
+
+  const handleAddWatchStock = async () => {
+    const query = watchlistInput.trim()
+    if (!query) {
+      setWarning('请输入 6 位股票代码或股票名称。')
+      return
+    }
+    if (/^\d{6}$/.test(query)) {
+      addWatchStockCode(query)
+      return
+    }
+
+    setStockSearchLoading(true)
+    setStockSearchMatches([])
+    try {
+      const response = await fetch(`/api/stock-search?q=${encodeURIComponent(query)}`)
+      const payload = (await response.json()) as {
+        stocks?: StockSearchCandidate[]
+        error?: string
+      }
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`)
+      const matches = payload.stocks ?? []
+      if (matches.length === 0) {
+        setWarning(`没有找到「${query}」对应的 A 股或场内基金，请检查名称或代码。`)
+      } else if (matches.length === 1) {
+        addWatchStockCode(matches[0].code)
+      } else {
+        setStockSearchMatches(matches)
+      }
+    } catch (error) {
+      setWarning(
+        error instanceof Error ? error.message : '股票搜索失败，请稍后重试。',
+      )
+    } finally {
+      setStockSearchLoading(false)
+    }
+  }
+
+  const handleRemoveWatchStock = (code: string) => {
+    if (!activeGroup) return
+    setWatchGroups((prev) =>
+      prev.map((g) =>
+        g.id === activeGroup.id ? { ...g, codes: g.codes.filter((c) => c !== code) } : g,
+      ),
+    )
+  }
+
+  const handleMoveWatchStock = (code: string) => {
+    if (!activeGroup) return
+    const targetId = moveTargets[code]
+    const target = watchGroups.find((group) => group.id === targetId)
+    if (!target || target.id === activeGroup.id) return
+    if (
+      target.id !== UNASSIGNED_GROUP_ID &&
+      !target.codes.includes(code) &&
+      target.codes.length >= MAX_GROUP_STOCKS
+    ) {
+      setWarning(`「${target.name}」已达到 ${MAX_GROUP_STOCKS} 个标的上限。`)
+      return
+    }
+    setWatchGroups((prev) =>
+      prev.map((group) => {
+        if (group.id === activeGroup.id) {
+          return { ...group, codes: group.codes.filter((item) => item !== code) }
+        }
+        if (group.id === target.id && !group.codes.includes(code)) {
+          return { ...group, codes: [...group.codes, code] }
+        }
+        return group
+      }),
+    )
+    setMoveTargets((prev) => {
+      const next = { ...prev }
+      delete next[code]
+      return next
+    })
+    setActiveGroupId(target.id)
+  }
+
+  const handleAddWatchGroup = () => {
+    const groupCount = watchGroups.filter((group) => group.id !== UNASSIGNED_GROUP_ID).length
+    const name = newGroupName.trim() || `分组 ${groupCount + 1}`
+    const group = createWatchGroup(groupCount + 1, name)
+    setWatchGroups((prev) => [...prev, group])
+    setActiveGroupId(group.id)
+    setCreatingGroup(false)
+    setNewGroupName('')
+  }
+
+  const handleCancelAddGroup = () => {
+    setCreatingGroup(false)
+    setNewGroupName('')
+  }
+
+  const handleRenameWatchGroup = (id: string) => {
+    const name = renameGroupName.trim()
+    if (!name) {
+      setWarning('标签名称不能为空。')
+      return
+    }
+    if (
+      watchGroups.some(
+        (group) =>
+          group.id !== id &&
+          group.id !== UNASSIGNED_GROUP_ID &&
+          group.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase(),
+      )
+    ) {
+      setWarning(`已存在名为「${name}」的标签。`)
+      return
+    }
+    setWatchGroups((prev) => prev.map((group) => (group.id === id ? { ...group, name } : group)))
+    setRenamingGroupId('')
+    setRenameGroupName('')
+  }
+
+  const handleCancelRenameWatchGroup = () => {
+    setRenamingGroupId('')
+    setRenameGroupName('')
+  }
+
+  const handleRemoveWatchGroup = (id: string) => {
+    if (id === UNASSIGNED_GROUP_ID) return
+    setPendingDeleteGroupId(id)
+  }
+
+  const handleConfirmRemoveWatchGroup = (moveStocksToUnassigned: boolean) => {
+    const group = watchGroups.find((item) => item.id === pendingDeleteGroupId)
+    if (!group || group.id === UNASSIGNED_GROUP_ID) {
+      setPendingDeleteGroupId('')
+      return
+    }
+    const unassigned = watchGroups.find((item) => item.id === UNASSIGNED_GROUP_ID)
+    if (!unassigned) return
+
+    const mergedCodes = [...new Set([...unassigned.codes, ...group.codes])]
+
+    setWatchGroups((prev) => {
+      const withoutDeleted = prev.filter((item) => item.id !== group.id)
+      return moveStocksToUnassigned
+        ? withoutDeleted.map((item) =>
+            item.id === UNASSIGNED_GROUP_ID ? { ...item, codes: mergedCodes } : item,
+          )
+        : withoutDeleted
+    })
+    setPendingDeleteGroupId('')
+    setActiveGroupId(UNASSIGNED_GROUP_ID)
+  }
 
   const handleQueryYearHigh = useCallback(async (stock: ScoredStock) => {
     const symbol = toSymbol(stock.code)
@@ -2176,6 +2555,26 @@ function App() {
           </div>
         </div>
       </header>
+    </>
+  )
+
+  const realtimeSection = (
+    <>
+      <header className="hero">
+        <div>
+          <span className="eyebrow">大盘实时行情</span>
+          <h1>市场实时资金与点位</h1>
+          <p className="hero-text">
+            聚合上证指数点位与沪深核心资金流向，每 30~60 秒自动刷新，只呈现当下的市场位置与资金动向。
+          </p>
+          <div className="hero-tags">
+            <span>上证点位定仓位</span>
+            <span>主力/超大单/散户资金</span>
+            <span>昨日与前天对比</span>
+            <span>总成交额</span>
+          </div>
+        </div>
+      </header>
 
       <section className="panel index-position-panel">
         <div className="section-title">
@@ -2300,13 +2699,113 @@ function App() {
         ) : !capitalFlow.isTradingDay ? (
           <p className="muted">今日休市，无实时资金流向数据。</p>
         ) : (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(4, 1fr)',
-              gap: '12px',
-            }}
-          >
+          <>
+            {/* 全市场合计 */}
+            {(() => {
+              const total = capitalFlow.marketTotal
+              const totalDims: { label: string; today: number | null; yest: number | null; yestDate: string; db: number | null; dbDate: string; highlight?: boolean; isAmount?: boolean }[] = [
+                { label: '主力净流入', today: total.today?.mainNet ?? null, yest: total.yesterday?.mainNet ?? null, yestDate: total.yesterday?.date ?? '', db: total.dayBefore?.mainNet ?? null, dbDate: total.dayBefore?.date ?? '' },
+                { label: '超大单', today: total.today?.superLargeNet ?? null, yest: total.yesterday?.superLargeNet ?? null, yestDate: total.yesterday?.date ?? '', db: total.dayBefore?.superLargeNet ?? null, dbDate: total.dayBefore?.date ?? '' },
+                { label: '小单(散户)', today: total.today?.smallNet ?? null, yest: total.yesterday?.smallNet ?? null, yestDate: total.yesterday?.date ?? '', db: total.dayBefore?.smallNet ?? null, dbDate: total.dayBefore?.date ?? '' },
+                { label: '合计净流入', today: total.today?.combined ?? null, yest: total.yesterday?.combined ?? null, yestDate: total.yesterday?.date ?? '', db: total.dayBefore?.combined ?? null, dbDate: total.dayBefore?.date ?? '', highlight: true },
+                { label: '总成交额', today: total.today?.amount ?? null, yest: total.yesterday?.amount ?? null, yestDate: total.yesterday?.date ?? '', db: total.dayBefore?.amount ?? null, dbDate: total.dayBefore?.date ?? '', isAmount: true },
+              ]
+              return (
+                <div
+                  style={{
+                    background: 'rgba(59,130,246,0.08)',
+                    border: '1px solid rgba(59,130,246,0.35)',
+                    borderRadius: '10px',
+                    padding: '14px 16px',
+                    marginBottom: '12px',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: '10px', fontSize: '15px', color: '#60a5fa' }}>
+                    全市场合计（上证+深证+创业板+沪深300）
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px' }}>
+                    {totalDims.map((d) => {
+                      const todayYi = d.today !== null ? d.today / 1e8 : null
+                      const yestYi = d.yest !== null ? d.yest / 1e8 : null
+                      const dbYi = d.db !== null ? d.db / 1e8 : null
+                      const diffYest =
+                        todayYi !== null && yestYi !== null ? todayYi - yestYi : null
+                      const diffDb =
+                        todayYi !== null && dbYi !== null ? todayYi - dbYi : null
+                      // 成交额今日值用中性色；净流入今日值按正负着色
+                      const todayColor = d.isAmount
+                        ? 'inherit'
+                        : todayYi !== null
+                          ? todayYi > 0
+                            ? '#ef4444'
+                            : todayYi < 0
+                              ? '#22c55e'
+                              : 'inherit'
+                          : 'inherit'
+                      const colorFor = (v: number | null) =>
+                        v !== null
+                          ? v > 0
+                            ? '#ef4444'
+                            : v < 0
+                              ? '#22c55e'
+                              : 'inherit'
+                          : 'inherit'
+                      return (
+                        <div
+                          key={d.label}
+                          style={
+                            d.highlight
+                              ? {
+                                  background: 'rgba(250,204,21,0.08)',
+                                  border: '1px solid rgba(250,204,21,0.4)',
+                                  borderRadius: '8px',
+                                  padding: '8px 10px',
+                                }
+                              : d.isAmount
+                                ? {
+                                    background: 'rgba(96,165,250,0.08)',
+                                    border: '1px solid rgba(96,165,250,0.3)',
+                                    borderRadius: '8px',
+                                    padding: '8px 10px',
+                                  }
+                                : undefined
+                          }
+                        >
+                          <div style={{ opacity: 0.7, fontSize: '12px', marginBottom: '2px', fontWeight: d.highlight || d.isAmount ? 700 : 400 }}>{d.label}</div>
+                          <div style={{ color: todayColor, fontWeight: 700, fontSize: '20px' }}>
+                            {todayYi !== null
+                              ? `${d.isAmount ? '' : todayYi > 0 ? '+' : ''}${todayYi.toFixed(2)}亿`
+                              : '—'}
+                          </div>
+                          {diffYest !== null && (
+                            <div style={{ color: colorFor(diffYest), fontSize: '12px' }}>
+                              {diffYest > 0 ? '↑' : diffYest < 0 ? '↓' : '→'}{' '}
+                              {Math.abs(diffYest).toFixed(2)}亿
+                              {d.yestDate ? `（昨${d.yestDate.slice(5)}）` : ''}
+                            </div>
+                          )}
+                          {!d.isAmount && diffDb !== null && (
+                            <div style={{ color: colorFor(diffDb), fontSize: '12px' }}>
+                              {diffDb > 0 ? '↑' : diffDb < 0 ? '↓' : '→'}{' '}
+                              {Math.abs(diffDb).toFixed(2)}亿
+                              {d.dbDate ? `（前${d.dbDate.slice(5)}）` : ''}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })()}
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: '12px',
+              }}
+            >
             {capitalFlow.indices.map((idx) => {
               const dims: { label: string; today: number | null; yest: number | null }[] = [
                 { label: '主力净流入', today: idx.today?.mainNet ?? null, yest: idx.yesterday?.mainNet ?? null },
@@ -2376,9 +2875,328 @@ function App() {
               )
             })}
           </div>
+          </>
         )}
       </section>
 
+      {/* 个股资金流向（自选分组） */}
+      <section className="panel">
+        <div className="section-title">
+          <h2>个股 / ETF 资金流向</h2>
+          <p>
+            数据来源：东方财富，每 {STOCK_FLOW_REFRESH_MS / 1000}{' '}
+            秒刷新。按分组管理自选标的，仅<strong>当前分组</strong>
+            中的股票会查询并展示其主力、超大单、大单、中单、小单净流入与主力净占比。
+            {stockFlowUpdatedAt
+              ? ` 最近更新 ${stockFlowUpdatedAt.toLocaleTimeString('zh-CN', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })}`
+              : ''}
+          </p>
+        </div>
+
+        <div className="action-row" style={{ flexWrap: 'wrap' }}>
+          {watchGroups.map((group) => (
+            <button
+              key={group.id}
+              type="button"
+              className={group.id === activeGroup?.id ? undefined : 'button-secondary'}
+              onClick={() => setActiveGroupId(group.id)}
+            >
+              {group.name}（{group.codes.length}
+              {group.id === UNASSIGNED_GROUP_ID ? '' : `/${MAX_GROUP_STOCKS}`}）
+            </button>
+          ))}
+          {!creatingGroup && !renamingGroupId && (
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => {
+                setNewGroupName('')
+                setCreatingGroup(true)
+              }}
+            >
+              ＋ 新建分组
+            </button>
+          )}
+          {!creatingGroup &&
+            !renamingGroupId &&
+            activeGroup?.id !== UNASSIGNED_GROUP_ID && (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => {
+                  setRenameGroupName(activeGroup?.name ?? '')
+                  setRenamingGroupId(activeGroup?.id ?? '')
+                }}
+              >
+                重命名标签
+              </button>
+            )}
+        </div>
+
+        {pendingDeleteGroup && (
+          <div className="watch-group-delete-overlay">
+            <div
+              className="watch-group-delete-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="watch-group-delete-title"
+            >
+              <div>
+                <strong id="watch-group-delete-title">
+                  删除标签「{pendingDeleteGroup.name}」？
+                </strong>
+                <p>
+                  该标签包含 {pendingDeleteGroup.codes.length} 个标的。请选择如何处理：
+                  移入未分组（{unassignedGroup?.codes.length ?? 0} 个，不限数量），
+                  或连同标签及其中标的一起删除。
+                </p>
+              </div>
+              <div className="action-row">
+                <button
+                  type="button"
+                  onClick={() => handleConfirmRemoveWatchGroup(true)}
+                >
+                  移入未分组并删除标签
+                </button>
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={() => handleConfirmRemoveWatchGroup(false)}
+                >
+                  删除标签及其中股票
+                </button>
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={() => setPendingDeleteGroupId('')}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {creatingGroup && (
+          <div className="watch-group-edit-controls">
+            <label className="inline-search">
+              <span>分组名称</span>
+              <input
+                value={newGroupName}
+                autoFocus
+                onChange={(event) => setNewGroupName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') handleAddWatchGroup()
+                  if (event.key === 'Escape') handleCancelAddGroup()
+                }}
+                placeholder={`分组 ${namedGroupCount + 1}`}
+              />
+            </label>
+            <button type="button" onClick={handleAddWatchGroup}>
+              确定
+            </button>
+            <button type="button" className="button-secondary" onClick={handleCancelAddGroup}>
+              取消
+            </button>
+          </div>
+        )}
+        {renamingGroupId && (
+          <div className="watch-group-edit-controls">
+            <label className="inline-search">
+              <span>标签名称</span>
+              <input
+                value={renameGroupName}
+                autoFocus
+                onChange={(event) => setRenameGroupName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') handleRenameWatchGroup(renamingGroupId)
+                  if (event.key === 'Escape') handleCancelRenameWatchGroup()
+                }}
+                placeholder="输入标签名称"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => handleRenameWatchGroup(renamingGroupId)}
+            >
+              保存名称
+            </button>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={handleCancelRenameWatchGroup}
+            >
+              取消
+            </button>
+          </div>
+        )}
+
+        <div className="stock-flow-controls">
+          <label className="stock-flow-search-field">
+            <span>股票代码或名称</span>
+            <input
+              value={watchlistInput}
+              onChange={(event) => {
+                setWatchlistInput(event.target.value)
+                setStockSearchMatches([])
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') handleAddWatchStock()
+              }}
+              placeholder="例如 600036、招商银行、通信ETF国泰"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={handleAddWatchStock}
+            disabled={stockSearchLoading}
+          >
+            {stockSearchLoading
+              ? '搜索中...'
+              : `添加到「${activeGroup?.name ?? '分组'}」`}
+          </button>
+          {activeGroup?.id !== UNASSIGNED_GROUP_ID && (
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => activeGroup && handleRemoveWatchGroup(activeGroup.id)}
+            >
+              删除当前标签
+            </button>
+          )}
+        </div>
+        {stockSearchMatches.length > 0 && (
+          <div className="action-row" aria-label="股票搜索结果">
+            <span>请选择标的：</span>
+            {stockSearchMatches.map((stock) => (
+              <button
+                key={stock.code}
+                type="button"
+                className="button-secondary"
+                onClick={() => addWatchStockCode(stock.code)}
+              >
+                {stock.name}（{stock.code} · {stock.category}）
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="helper-text">
+          可输入 6 位股票/ETF 代码或名称；名称匹配多个标的时请选择正确项。「未分组」不限数量，其他标签每组最多{' '}
+          {MAX_GROUP_STOCKS} 个标的；分组与自选列表保存在本地浏览器。
+        </p>
+
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th>最新价</th>
+                <th>涨跌幅</th>
+                <th>主力净流入</th>
+                <th>主力净占比</th>
+                <th>超大单</th>
+                <th>大单</th>
+                <th>中单</th>
+                <th>小单</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeGroupCodes.map((code) => {
+                const item = stockFlow?.stocks.find((s) => s.code === code)
+                return (
+                  <tr key={code}>
+                    <td>{code}</td>
+                    <td>{item?.name ?? '—'}</td>
+                    <td>{item?.price != null ? item.price.toFixed(2) : '—'}</td>
+                    <td style={{ color: netColor(item?.changePct ?? null) }}>
+                      {item?.changePct != null
+                        ? `${item.changePct > 0 ? '+' : ''}${item.changePct.toFixed(2)}%`
+                        : '—'}
+                    </td>
+                    <td style={{ color: netColor(item?.mainNet ?? null) }}>
+                      {formatYi(item?.mainNet ?? null)}
+                    </td>
+                    <td style={{ color: netColor(item?.mainPct ?? null) }}>
+                      {item?.mainPct != null
+                        ? `${item.mainPct > 0 ? '+' : ''}${item.mainPct.toFixed(2)}%`
+                        : '—'}
+                    </td>
+                    <td style={{ color: netColor(item?.superLargeNet ?? null) }}>
+                      {formatYi(item?.superLargeNet ?? null)}
+                    </td>
+                    <td style={{ color: netColor(item?.largeNet ?? null) }}>
+                      {formatYi(item?.largeNet ?? null)}
+                    </td>
+                    <td style={{ color: netColor(item?.mediumNet ?? null) }}>
+                      {formatYi(item?.mediumNet ?? null)}
+                    </td>
+                    <td style={{ color: netColor(item?.smallNet ?? null) }}>
+                      {formatYi(item?.smallNet ?? null)}
+                    </td>
+                    <td>
+                      <div className="stock-move-controls">
+                        <select
+                          aria-label={`移动 ${item?.name ?? code} 到标签`}
+                          value={moveTargets[code] ?? ''}
+                          onChange={(event) =>
+                            setMoveTargets((prev) => ({
+                              ...prev,
+                              [code]: event.target.value,
+                            }))
+                          }
+                        >
+                          <option value="">选择目标标签</option>
+                          {watchGroups
+                            .filter((group) => group.id !== activeGroup?.id)
+                            .map((group) => (
+                              <option key={group.id} value={group.id}>
+                                {group.name}
+                              </option>
+                            ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="button-secondary"
+                          disabled={!moveTargets[code]}
+                          onClick={() => handleMoveWatchStock(code)}
+                        >
+                          移动
+                        </button>
+                        <button
+                          type="button"
+                          className="risk-trigger"
+                          onClick={() => handleRemoveWatchStock(code)}
+                        >
+                          移除
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+              {activeGroupCodes.length === 0 && (
+                <tr>
+                  <td colSpan={11}>
+                    当前分组暂无标的。请在上方输入股票/ETF代码或名称添加到「
+                    {activeGroup?.name ?? '分组'}」。
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </>
+  )
+
+  const overviewDetailSection = (
+    <>
       <section className="panel">
         <div className="section-title">
           <h2>市场温度</h2>
@@ -3736,7 +4554,7 @@ function App() {
           <p>研究模式</p>
         </div>
         <nav className="nav-list">
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <button
               key={item.key}
               type="button"
@@ -3765,7 +4583,13 @@ function App() {
           </button>
         </div>
 
-        {activeView === 'overview' && overviewSection}
+        {activeView === 'overview' && (
+          <>
+            {overviewSection}
+            {overviewDetailSection}
+          </>
+        )}
+        {activeView === 'realtime' && realtimeSection}
         {activeView === 'scores' && scoreSection}
         {activeView === 'diagnosis' && diagnosisSection}
         {activeView === 'portfolio' && portfolioSection}

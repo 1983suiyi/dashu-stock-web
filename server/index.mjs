@@ -11,7 +11,7 @@ import { getPbFloors } from './pb-floor.mjs'
 import { getIndustryCycle } from './industry-cycle.mjs'
 import { getStockValuation } from './stock-valuation.mjs'
 import { queryIndexHistory } from './index-history.mjs'
-import { queryCapitalFlow } from './capital-flow.mjs'
+import { queryCapitalFlow, queryStockCapitalFlow, searchStocks } from './capital-flow.mjs'
 import { handleAccountApi } from './api.mjs'
 import {
   handleDailyMarketRoute,
@@ -190,6 +190,30 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       sendJson(res, 500, {
         error: `资金流向异常：${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+    return
+  }
+
+  if (url.pathname === '/api/stock-capital-flow') {
+    try {
+      const result = await queryStockCapitalFlow(url.searchParams.get('codes') ?? '')
+      sendJson(res, 200, result)
+    } catch (error) {
+      sendJson(res, 500, {
+        error: `个股资金流向异常：${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+    return
+  }
+
+  if (url.pathname === '/api/stock-search') {
+    try {
+      const result = await searchStocks(url.searchParams.get('q') ?? '')
+      sendJson(res, 200, result)
+    } catch (error) {
+      sendJson(res, 502, {
+        error: `股票搜索异常：${error instanceof Error ? error.message : String(error)}`,
       })
     }
     return

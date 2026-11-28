@@ -132,13 +132,14 @@ const toUser = (row) => ({
   email: row.email,
   role: row.role,
   status: row.status,
+  realtimeEnabled: Number(row.realtime_enabled ?? 0) === 1,
   createdAt: Number(row.created_at),
   lastLoginAt: row.last_login_at == null ? null : Number(row.last_login_at),
 })
 
 export const getUserById = (userId) => {
   const row = db
-    .prepare('SELECT id, email, role, status, created_at, last_login_at FROM users WHERE id = ?')
+    .prepare('SELECT id, email, role, status, realtime_enabled, created_at, last_login_at FROM users WHERE id = ?')
     .get(userId)
   return row ? toUser(row) : null
 }
@@ -186,7 +187,7 @@ export const getSessionUser = (req) => {
   const tokenHash = sha256(token)
   const row = db
     .prepare(
-      `SELECT s.expires_at, u.id, u.email, u.role, u.status, u.created_at, u.last_login_at
+      `SELECT s.expires_at, u.id, u.email, u.role, u.status, u.realtime_enabled, u.created_at, u.last_login_at
        FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.token_hash = ?`,
     )

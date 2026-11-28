@@ -9,6 +9,8 @@ export type SessionUser = {
   email: string
   role: 'user' | 'admin'
   status: string
+  /** 是否开通「实时行情」页面展示（默认关闭，由管理员按账户开通） */
+  realtimeEnabled: boolean
   createdAt: number
   lastLoginAt: number | null
 }

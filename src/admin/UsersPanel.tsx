@@ -9,6 +9,7 @@ type AdminUser = {
   email: string
   status: string
   role: string
+  realtimeEnabled: boolean
   createdAt: number
   lastLoginAt: number | null
 }
@@ -69,6 +70,20 @@ export function UsersPanel() {
     await load()
   }
 
+  const toggleRealtime = async (user: AdminUser) => {
+    setError(null)
+    const result = await apiSend<{ updated: boolean }>(
+      `/api/admin/users/${user.id}`,
+      'PATCH',
+      { realtimeEnabled: !user.realtimeEnabled },
+    )
+    if (!result.ok) {
+      setError(result.error.message)
+      return
+    }
+    await load()
+  }
+
   const removeUser = async (user: AdminUser) => {
     if (!window.confirm(`确认删除用户 ${user.email}？该操作不可恢复，其数据将被级联清除。`)) return
     setError(null)
@@ -105,7 +120,7 @@ export function UsersPanel() {
     <section className="panel">
       <div className="section-title">
         <h2>用户管理</h2>
-        <p>查看注册用户、禁用/启用账号、重置密码、删除账号。</p>
+        <p>查看注册用户、禁用/启用账号、开通实时行情、重置密码、删除账号。</p>
       </div>
 
       <div className="admin-form" style={{ marginBottom: 12 }}>
@@ -147,6 +162,7 @@ export function UsersPanel() {
                   <th>邮箱</th>
                   <th>角色</th>
                   <th>状态</th>
+                  <th>实时行情</th>
                   <th>注册时间</th>
                   <th>最后登录</th>
                   <th>操作</th>
@@ -167,6 +183,15 @@ export function UsersPanel() {
                         {user.status === 'active' ? '正常' : '已禁用'}
                       </span>
                     </td>
+                    <td>
+                      <span
+                        className={
+                          user.realtimeEnabled ? 'status status-active' : 'status status-muted'
+                        }
+                      >
+                        {user.realtimeEnabled ? '已开通' : '未开通'}
+                      </span>
+                    </td>
                     <td>{formatTime(user.createdAt)}</td>
                     <td>{formatTime(user.lastLoginAt)}</td>
                     <td>
@@ -184,6 +209,13 @@ export function UsersPanel() {
                           onClick={() => void toggleStatus(user)}
                         >
                           {user.status === 'active' ? '禁用' : '启用'}
+                        </button>
+                        <button
+                          type="button"
+                          className="button-secondary"
+                          onClick={() => void toggleRealtime(user)}
+                        >
+                          {user.realtimeEnabled ? '关闭实时行情' : '开通实时行情'}
                         </button>
                         <button
                           type="button"
